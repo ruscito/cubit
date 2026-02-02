@@ -4,15 +4,11 @@
   <img src="assets/cubit_logo_512px.png" alt="Cubit Engine Logo" width="400"/>
 </p>
 
-<p align="center">
-  <strong>A lightweight 3D game engine written in C with OpenGL</strong>
-</p>
-
 ---
 
 ## About
 
-**Cubit** is a minimalist 3D game engine built from scratch in C. It provides a clean API for rendering, input handling, and camera control.
+**Cubit** is a lightweight 3D game engine built from scratch in C. It provides a clean API for rendering, input handling, and camera control.
 
 ## Features
 
