@@ -43,8 +43,12 @@ void application_shutdown(void) {
 ## Building
 
 ```bash
-# Coming soon
+make
+make copy
 ```
+
+## Architecture Notes
+For detailed architecture/design decisions and development notes, see [Notes.md](docs/Notes.md).
 
 ## License
 
