@@ -81,3 +81,6 @@ void material_set_diffuse_texture(material_t* m, texture_t* t) {
 void material_set_normal_texture(material_t* m, texture_t* t) {
 	m->normal_texture = t;
 }
+
+
+

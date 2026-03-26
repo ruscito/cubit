@@ -436,6 +436,7 @@ void application_init(void) {
 	object3d_set_mesh(left_cube, cube_mesh);
 	object3d_set_material(left_cube, mat_blue);
 	object3d_set_position(left_cube, (vec3){-3.0f, 0.0f, 0.0f});
+    object3d_set_uv_rect(left_cube, 32, 32, 32, 32);
 
 	right_cube = object3d_new();
 	object3d_set_mesh(right_cube, cube_mesh);
@@ -444,8 +445,9 @@ void application_init(void) {
 
 	back_cube = object3d_new();
 	object3d_set_mesh(back_cube, cube_mesh);
-	object3d_set_material(back_cube, mat_yellow);
+	object3d_set_material(back_cube, mat_blue);
 	object3d_set_position(back_cube, (vec3){0.0f, 0.0f, -3.0f});
+    object3d_set_uv_rect(back_cube, 0, 0, 32, 32);
 
 	front_cube = object3d_new();
 	object3d_set_mesh(front_cube, cube_mesh);

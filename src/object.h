@@ -14,7 +14,7 @@ struct object3d_t{
 	material_t* material;
 	aabb_t aabb;
 	bool dirty;
-	float bounding;
+    vec4 uv_rect; // the rect dimention from the atlas
 };
 
 #endif

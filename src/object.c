@@ -3,14 +3,16 @@
 #include "object.h"
 #include "stb_math3d.h"
 #include "mesh.h"
+#include "material.h"
+#include "texture.h"
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <float.h>
 
-#define  DEFAULT_BOUNDING	0.866
 
 
+/* It creates a new object3d and set all the default value */
 object3d_t* object3d_new(void) {
 	object3d_t  *obj = malloc(sizeof(*obj));
 	if (!obj) {
@@ -18,9 +20,9 @@ object3d_t* object3d_new(void) {
 		exit(-1);
 	}
 	obj->transform = mat4_identity();
-	obj->bounding = DEFAULT_BOUNDING;
 	obj->mesh = NULL;
-	obj->material = NULL;
+	obj->material = material_get_default();
+    obj->uv_rect = (vec4){0, 0, 1, 1};
 	return obj;
 }
 
@@ -119,12 +121,17 @@ void object3d_rotate_z(object3d_t *obj, float angle) {
 	obj->dirty = true;
 }
 
-float object3d_get_bounding(object3d_t *obj) {
-	return obj->bounding;
-}
-
 aabb_t object3d_get_aabb(object3d_t *obj) {
 	if (obj->dirty) update_aabb(obj);
 	return obj->aabb;
+}
+
+/* Normalize and assign the object uv_rect */
+void object3d_set_uv_rect(object3d_t* obj, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    // normalization
+    obj->uv_rect.x = (float)x / (float)obj->material->diffuse_texture->width;
+    obj->uv_rect.y = (float)y / (float)obj->material->diffuse_texture->height;
+    obj->uv_rect.z = (float)(x+w) / (float)obj->material->diffuse_texture->width;
+    obj->uv_rect.w = (float)(y+h) / (float)obj->material->diffuse_texture->height;
 }
 

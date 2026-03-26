@@ -27,7 +27,7 @@
 static viewport_resized_func vieport_resized;
 static float shadow_distance = 50.0f;
 static camera_t* active_camera; // The camera the player is using (focus active)
-static mat4 active_vpm; // the active camera vpm
+static mat4 active_mvp; // the active camera vpm
 
 void shadow_distance_set(float sd) {
     shadow_distance = sd;
@@ -89,7 +89,7 @@ void mesh_draw_instanced(mesh_t* mesh, mat4* transforms, uint32_t count, mat4 vp
 	cmd.instanced_draw.vp = vp;
 	cmd.instanced_draw.m = transforms;
 	cmd.instanced_draw.vao = mesh->vao;
-	cmd.instanced_draw.vbo = mesh->instance_vbo;
+	cmd.instanced_draw.vbo = mesh->instance_vbo_transform;
 	cmd.instanced_draw.vertex_count = mesh->vertex_count;
 	cmd.instanced_draw.instance_count = count;
 	renderer_submit(&cmd);
@@ -101,12 +101,12 @@ void mesh_draw_instanced(mesh_t* mesh, mat4* transforms, uint32_t count, mat4 vp
  * provide the default one */
 void submit_object3d(object3d_t* obj) {
 	if (camera_is_object3d_visible(active_camera, obj)) {
-		if (obj->material == NULL) obj->material = material_get_default();
 		batch_push(
 			obj->mesh,
 			obj->material,
 			obj->transform,
-			active_vpm // camera_get_view_projection_matrix(camera)
+            obj->uv_rect,
+			active_mvp // camera_get_view_projection_matrix(camera)
 		);
 
 	}
@@ -128,7 +128,7 @@ void camera_set_active(camera_t* c) {
     vec3 corners[8];
     camera_get_frustum_corners(c, corners, shadow_distance);
     backend_set_active_frustum_corners(corners);
-    active_vpm = camera_get_view_projection_matrix(c);
+    active_mvp = camera_get_view_projection_matrix(c);
 }
 
 camera_t* camera_get_active(void) {

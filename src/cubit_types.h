@@ -52,6 +52,7 @@ typedef enum {
 	LOC_BONE_IDX,
 	LOC_BONE_WGHT,
 	LOC_MODEL,
+    LOC_UV_RECT = 10,
 } LocationTypes;
 
 typedef enum {
@@ -74,6 +75,8 @@ typedef enum {
 
 typedef struct { float r, g, b, a; } color_t;
 typedef struct { float x, y, w, h; } viewport_t;
+typedef struct { uint32_t x, y, w, h; } rect_t;
+
 typedef struct camera_t camera_t;
 typedef struct object3d_t object3d_t;
 typedef struct material_t material_t;

@@ -41,6 +41,7 @@ mesh_t* object3d_get_mesh(object3d_t *obj);
 material_t* object3d_get_material(object3d_t *obj);
 mat4 object3d_get_transform(object3d_t *obj);
 aabb_t object3d_get_aabb(object3d_t *obj);
+void object3d_set_uv_rect(object3d_t* obj, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 
 // Input
 int32_t is_key_pressed(InputKeyboardKey key);

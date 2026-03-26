@@ -17,7 +17,6 @@ struct material_t{
 	texture_t *diffuse_texture;	// NULL = no texture
 	texture_t *normal_texture;  // NULL = no texture
 	shader_t *shader;			// pointer to the shader associated to the material
-
 };
 
 void material_init(void);

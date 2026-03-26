@@ -327,13 +327,23 @@ static void shadow_pass(void) {
 
 			for (uint32_t j = 0; j < batch_size(); j++) {
 				batch_registry_entry_t e = batch_get_entry(j);
-				glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo);
+                // TRANSFORM
+				glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
 				glBufferData(
 					GL_ARRAY_BUFFER,
 					sizeof(mat4) * e.count,
 					e.transforms,
 					GL_DYNAMIC_DRAW
 				);
+                //UV RECT
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+				glBufferData(
+					GL_ARRAY_BUFFER,
+					sizeof(vec4) * e.count,
+					e.uv_rect,
+					GL_DYNAMIC_DRAW
+				);
+
 				glBindBuffer(GL_ARRAY_BUFFER, 0);
 				glBindVertexArray(e.mesh->vao);
 				glDrawElementsInstanced(
@@ -379,14 +389,23 @@ void renderer_draw(void) {
 		}
 
 		push_shader_data(&e);
-		glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo);
+        //TRANSFORM
+		glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
 		glBufferData(
 			GL_ARRAY_BUFFER,
 			sizeof(mat4) * e.count,
 			e.transforms,
 			GL_DYNAMIC_DRAW
 		);
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
+        //UV RECT
+        glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            sizeof(vec4) * e.count,
+            e.uv_rect,
+            GL_DYNAMIC_DRAW
+        );
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(e.mesh->vao);
 		glDrawElementsInstanced(
 			GL_TRIANGLES,
@@ -468,6 +487,8 @@ static void push_buffer(uint32_t* vbo, void* data, uint32_t vertex_count, uint32
 	glEnableVertexAttribArray(loc);
 }
 
+
+/* Create a new mesh objct */
 void backend_mesh_new(mesh_t* m, void *pos, void* nor, void *uv, void *tg, uint32_t *indices, uint32_t vertex_count, uint32_t index_count) {
 	m->vertex_count = vertex_count;
 	m->index_count = index_count;
@@ -490,8 +511,8 @@ void backend_mesh_new(mesh_t* m, void *pos, void* nor, void *uv, void *tg, uint3
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_count * sizeof(uint32_t), indices, GL_STATIC_DRAW);
 
 	// Instance model matrix buffer (locations 6-9)
-	glGenBuffers(1, &m->instance_vbo);
-	glBindBuffer(GL_ARRAY_BUFFER, m->instance_vbo);
+	glGenBuffers(1, &m->instance_vbo_transform);
+	glBindBuffer(GL_ARRAY_BUFFER, m->instance_vbo_transform);
 	uint32_t loc = LOC_MODEL;
 	for (uint32_t i = 0; i < 4; i++) {
 		glVertexAttribPointer(loc + i, 4, GL_FLOAT, GL_FALSE, sizeof(mat4), (void *)(i * sizeof(vec4)));
@@ -499,13 +520,21 @@ void backend_mesh_new(mesh_t* m, void *pos, void* nor, void *uv, void *tg, uint3
 		glVertexAttribDivisor(loc + i, 1);
 	}
 
-	glBindVertexArray(0);
+    // Instance uv_rect (location 10)
+	glGenBuffers(1, &m->instance_vbo_uv_rect);
+	glBindBuffer(GL_ARRAY_BUFFER, m->instance_vbo_uv_rect);
+	glVertexAttribPointer(LOC_UV_RECT, 4, GL_FLOAT, GL_FALSE, sizeof(vec4), (void *)0);
+	glEnableVertexAttribArray(LOC_UV_RECT);
+	glVertexAttribDivisor(LOC_UV_RECT, 1);
+
+    glBindVertexArray(0);
 }
 
 void backend_mesh_destroy(mesh_t* m) {
 	glDeleteVertexArrays(1, &m->vao);
 
-	glDeleteBuffers(1, &m->instance_vbo);
+	glDeleteBuffers(1, &m->instance_vbo_uv_rect);
+	glDeleteBuffers(1, &m->instance_vbo_transform);
 	glDeleteBuffers(1, &m->vbo_position);
 	glDeleteBuffers(1, &m->vbo_normal);
 	glDeleteBuffers(1, &m->vbo_uv);
