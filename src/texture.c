@@ -10,7 +10,8 @@
 texture_t* default_texture;
 texture_t* default_normal_texture;
 
-texture_t* texture_create(const char* filename) {
+
+texture_t* texture_create(const char* filename, TextureTypes typ) {
 	texture_t *t = malloc(sizeof(*t));
 	if (!t) {
 		fprintf(stderr, "Failed to allocate memory for texture object\n");
@@ -32,6 +33,7 @@ texture_t* texture_create(const char* filename) {
 
 	t->height = (uint32_t)height;
 	t->width = (uint32_t)width;
+    t->type = typ;
 
 	backend_texture_new(t, raw_pixel);
 	stbi_image_free(raw_pixel);
@@ -44,13 +46,14 @@ void texture_destroy(texture_t* t) {
 	free(t);
 }
 
-static void setup_texture(texture_t *texture) {
+static void setup_texture(texture_t *texture, TextureTypes t) {
 	texture->min_filter = NEAREST;
 	texture->mag_filter = NEAREST;
 	texture->s_wrap = REPEAT;
 	texture->t_wrap = REPEAT;
 	texture->width = 1;
 	texture->height = 1;
+    texture->type = t;
 }
 
 static void generate_texture(texture_t *texture, unsigned char *raw_pixels, uint32_t size) {
@@ -73,10 +76,10 @@ void texture_init(void) {
 		exit(-1);
 	}
 
-	setup_texture(default_texture);
+	setup_texture(default_texture, COLOR_TEXTURE);
 	generate_texture(default_texture,  (unsigned char []) {255, 255, 255, 255}, 4);
 
-	setup_texture(default_normal_texture);
+	setup_texture(default_normal_texture, DATA_TEXTURE);
 	generate_texture(default_normal_texture, (unsigned char []) {128, 128, 255}, 3);
 }
 

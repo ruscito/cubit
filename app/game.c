@@ -383,8 +383,8 @@ void application_config(app_config_t* cfg) {
 
 void application_init(void) {
 	// Texture
-	cube_texture = texture_create("./bin/assets/cube.png");
-	cube_normal_texture = texture_create("./bin/assets/cube_normal.png");
+	cube_texture = texture_create("./bin/assets/packed_cube.png", COLOR_TEXTURE);
+	cube_normal_texture = texture_create("./bin/assets/cube_normal.png", DATA_TEXTURE);
 	if (!cube_texture) exit(-1);
 	if (!cube_normal_texture) exit(-1);
 
@@ -402,6 +402,9 @@ void application_init(void) {
 	material_set_surface_color(mat_red, CUBIT_RED);
 	material_set_specular_color(mat_red, COLOR_WHITE);
 	material_set_shininess(mat_red, 32.0f);
+    material_set_opacity(mat_red, 0.3f);
+    material_set_cast_shadow(mat_red, false);
+
 
 	mat_blue = material_create();
 	material_set_surface_color(mat_blue, CUBIT_BLUE);
@@ -436,7 +439,7 @@ void application_init(void) {
 	object3d_set_mesh(left_cube, cube_mesh);
 	object3d_set_material(left_cube, mat_blue);
 	object3d_set_position(left_cube, (vec3){-3.0f, 0.0f, 0.0f});
-    object3d_set_uv_rect(left_cube, 32, 32, 32, 32);
+    object3d_set_uv_rect(left_cube, 2, 219, 32, 32);
 
 	right_cube = object3d_new();
 	object3d_set_mesh(right_cube, cube_mesh);
@@ -447,12 +450,13 @@ void application_init(void) {
 	object3d_set_mesh(back_cube, cube_mesh);
 	object3d_set_material(back_cube, mat_blue);
 	object3d_set_position(back_cube, (vec3){0.0f, 0.0f, -3.0f});
-    object3d_set_uv_rect(back_cube, 0, 0, 32, 32);
+    object3d_set_uv_rect(back_cube, 2, 115, 64, 64);
 
 	front_cube = object3d_new();
 	object3d_set_mesh(front_cube, cube_mesh);
 	object3d_set_material(front_cube, mat_blue);
 	object3d_set_position(front_cube, (vec3){0.0f, 0.0f, 3.0f});
+    object3d_set_uv_rect(front_cube, 2, 2, 89, 109);
 
 	// Directional light — warm sun from upper-left
 	sun = light_create(LIGHT_DIRECTIONAL);

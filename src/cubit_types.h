@@ -38,6 +38,11 @@
 #define MAX_LIGHTS 16
 
 typedef enum {
+    COLOR_TEXTURE,
+    DATA_TEXTURE
+} TextureTypes;
+
+typedef enum {
 	UNIFORM_FLOAT,
 	UNIFORM_VEC3,
 	UNIFORM_MAT4,

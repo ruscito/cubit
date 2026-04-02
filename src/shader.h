@@ -43,6 +43,7 @@ struct builtin_locations_t {
 	int32_t specular_color;
 	int32_t shininess;
 	int32_t emissive_color;
+    int32_t opacity;
 	// Light uniform locations
 	light_uniforms_t light[MAX_LIGHTS];
 	int32_t light_count;

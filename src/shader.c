@@ -62,7 +62,9 @@ static const char* default_fs_src = "#version 330 core\n"
 	"uniform vec3 surface_color;\n"
 	"uniform vec3 specular_color;\n"
 	"uniform float shininess;\n"
-	"uniform vec3 emissive_color;\n"
+    "uniform vec3 emissive_color;\n"
+	"uniform float opacity;\n"
+    "\n"
 	"uniform sampler2D diffuse_texture;\n"
 	"uniform sampler2D normal_texture;\n"
 	"uniform sampler2D shadow_map[4];\n"
@@ -104,8 +106,11 @@ static const char* default_fs_src = "#version 330 core\n"
 	"		normal = normalize(frag_normal);\n"
 	"	}\n"
 	"	vec3 view_dir = normalize(camera_position - frag_position);\n"
-	"	vec3 tex_color = texture(diffuse_texture, frag_uv).rgb;\n"
-	"   vec3 base_color = surface_color * tex_color;\n"
+	"	vec4 tex_color = texture(diffuse_texture, frag_uv).rgba;\n"
+    "   // if (tex_color.a * opacity < 0.5)\n"
+    "   if (tex_color.a < 0.5)\n"
+    "       discard;\n"
+	"   vec3 base_color = surface_color * tex_color.rgb;\n"
    	"\n"
 	"	vec3 result = vec3(0.0);\n"
 	"\n"
@@ -156,7 +161,7 @@ static const char* default_fs_src = "#version 330 core\n"
 	"		result = base_color;\n"
 	"	}\n"
 	"\n"
-	"	fragColor = vec4(result, 1.0);\n"
+	"	fragColor = vec4(result, tex_color.a * opacity);\n"
 	"}\0";
 
 
@@ -181,16 +186,28 @@ static const char* unlit_fs_src = "#version 330\n"
 
 static const char* shadow_vs_src = "#version 330 core\n"
 	"layout (location = 0) in vec3 aPos;\n"
+	"layout (location = 2) in vec2 aUV;\n"
 	"layout (location = 6) in mat4 aModel;\n"
+	"layout (location =10) in vec4 aUV_rect;\n"
+	"\n"
 	"uniform mat4 vp;\n"
+	"\n"
+	"out vec2 frag_uv;\n"
+	"\n"
 	"void main() {\n"
 	"	gl_Position = vp * aModel * vec4(aPos, 1.0);\n"
+	"	frag_uv = aUV * (aUV_rect.zw - aUV_rect.xy) + aUV_rect.xy;\n" // Remapping UV
 	"}\0";
 
 
 static const char* shadow_fs_src = "#version 330\n"
+	"uniform sampler2D diffuse_texture;\n"
+	"in vec2 frag_uv;\n"
+	"\n"
 	"void main() {\n"
-	"	;\n"
+    "	vec4 tex_color = texture(diffuse_texture, frag_uv).rgba;\n"
+    "   if (tex_color.a < 0.5)\n"
+    "       discard;\n"
 	"}\0";
 
 
@@ -214,11 +231,12 @@ static int32_t get_uniform_location(shader_t* s, const char* uniform, uint32_t p
  */
 static void resolve_builtin_locations(shader_t* s) {
 	// Material locations:
-	s->locations.vp            = glGetUniformLocation(s->program_id, "vp");
-	s->locations.surface_color = glGetUniformLocation(s->program_id, "surface_color");
-	s->locations.specular_color   = glGetUniformLocation(s->program_id, "specular_color");
-	s->locations.shininess        = glGetUniformLocation(s->program_id, "shininess");
-	s->locations.emissive_color   = glGetUniformLocation(s->program_id, "emissive_color");
+	s->locations.vp             = glGetUniformLocation(s->program_id, "vp");
+	s->locations.surface_color  = glGetUniformLocation(s->program_id, "surface_color");
+	s->locations.specular_color = glGetUniformLocation(s->program_id, "specular_color");
+	s->locations.shininess      = glGetUniformLocation(s->program_id, "shininess");
+	s->locations.emissive_color = glGetUniformLocation(s->program_id, "emissive_color");
+    s->locations.opacity        = glGetUniformLocation(s->program_id, "opacity");
 
 	// Lighting locations:
 	for (uint32_t i = 0; i < MAX_LIGHTS; i++) {

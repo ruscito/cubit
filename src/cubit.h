@@ -73,6 +73,8 @@ void material_set_roughness(material_t* m, float value);
 void material_set_emissive_color(material_t* m, color_t c);
 void material_set_diffuse_texture(material_t* m, texture_t* t);
 void material_set_normal_texture(material_t* m, texture_t* t);
+void material_set_opacity(material_t* m, float o);
+void material_set_cast_shadow(material_t* m, bool v);
 
 // Camera
 camera_t* camera_target_new(int32_t projection_mode, vec3 position, vec3  up,
@@ -107,7 +109,7 @@ void light_set_cone(int32_t index, float inner_degrees, float outer_degrees);
 void light_set_shadow_map(int32_t index, shadow_map_t *sm);
 
 // Texture
-texture_t* texture_create(const char* filename);
+texture_t* texture_create(const char* filename, TextureTypes typ);
 void texture_destroy(texture_t* t);
 
 // Scene related

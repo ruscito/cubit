@@ -17,6 +17,7 @@ struct texture_t {
 	FilteringMode mag_filter;
 	WrappingMode s_wrap;
 	WrappingMode t_wrap;
+    TextureTypes type;
 };
 
 

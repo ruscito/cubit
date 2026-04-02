@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/cubit_logo_512px.png" alt="Cubit Engine Logo" width="400"/>
+  <img src="docs/cubit_logo_512px.png" alt="Cubit Engine Logo" width="400"/>
 </p>
 
 ## About

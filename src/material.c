@@ -44,6 +44,8 @@ material_t* material_create(void) {
 	m->emissive_color = COLOR_BLACK;
 	m->diffuse_texture = texture_get_default(DIFFUSE);
 	m->normal_texture = texture_get_default(NORMAL);
+    m->opacity = 1;
+    m->cast_shadow = true;
 
 	m->shader = shader_get_default();
 	return m;
@@ -52,6 +54,10 @@ material_t* material_create(void) {
 void material_destroy(material_t* material) {
 	if (!material) return;
 	free(material);
+}
+
+void material_set_cast_shadow(material_t* m, bool v) {
+    m->cast_shadow = v;
 }
 
 void material_set_surface_color(material_t* m, color_t c) {
@@ -81,6 +87,11 @@ void material_set_diffuse_texture(material_t* m, texture_t* t) {
 void material_set_normal_texture(material_t* m, texture_t* t) {
 	m->normal_texture = t;
 }
+
+void material_set_opacity(material_t* m, float o) {
+    m->opacity = o;
+}
+
 
 
 

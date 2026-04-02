@@ -17,6 +17,9 @@ struct material_t{
 	texture_t *diffuse_texture;	// NULL = no texture
 	texture_t *normal_texture;  // NULL = no texture
 	shader_t *shader;			// pointer to the shader associated to the material
+    float opacity;              // texture opacity 1.0 by default
+    bool cast_shadow;           // true by default; it determins if a transparent
+                                // object has to cast a shadow
 };
 
 void material_init(void);

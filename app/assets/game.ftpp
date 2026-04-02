@@ -1,0 +1,66 @@
+{
+  "meta": {
+    "version": "0.6.7"
+  },
+  "savePath": "/Users/agostino/repos/c/game-engine/app/assets",
+  "images": [
+    {
+      "name": "blue.png",
+      "path": "/Users/agostino/repos/c/game-engine/app/assets/blue.png",
+      "folder": ""
+    },
+    {
+      "name": "cube.png",
+      "path": "/Users/agostino/repos/c/game-engine/app/assets/cube.png",
+      "folder": ""
+    },
+    {
+      "name": "green.png",
+      "path": "/Users/agostino/repos/c/game-engine/app/assets/green.png",
+      "folder": ""
+    },
+    {
+      "name": "leaf_cutout.png",
+      "path": "/Users/agostino/repos/c/game-engine/app/assets/leaf_cutout.png",
+      "folder": ""
+    },
+    {
+      "name": "red.png",
+      "path": "/Users/agostino/repos/c/game-engine/app/assets/red.png",
+      "folder": ""
+    },
+    {
+      "name": "yellow.png",
+      "path": "/Users/agostino/repos/c/game-engine/app/assets/yellow.png",
+      "folder": ""
+    }
+  ],
+  "folders": [],
+  "packOptions": {
+    "textureName": "packed_cube",
+    "textureFormat": "png",
+    "removeFileExtension": false,
+    "prependFolderName": true,
+    "base64Export": false,
+    "tinify": false,
+    "tinifyKey": "",
+    "scale": 1,
+    "filter": "none",
+    "exporter": "JSON (array)",
+    "fileName": "pack-result",
+    "savePath": "/Users/agostino/repos/c/game-engine/app/assets",
+    "width": 1024,
+    "height": 1024,
+    "fixedSize": false,
+    "powerOfTwo": false,
+    "padding": 0,
+    "extrude": 2,
+    "allowRotation": true,
+    "allowTrim": true,
+    "trimMode": "trim",
+    "alphaThreshold": "0",
+    "detectIdentical": true,
+    "packer": "MaxRectsBin",
+    "packerMethod": "BestShortSideFit"
+  }
+}

@@ -15,6 +15,14 @@ typedef struct {
 	mat4 vp;                // View and Projection
 } batch_registry_entry_t;
 
+typedef struct {
+    mesh_t* mesh;
+    material_t* material;
+    mat4 transform;
+    vec4 uv_rect;
+    mat4 vp;
+    float distance_sq;  // distanza² dalla camera, per il sort
+} transparent_entry_t;
 
 
 void batch_init(void);
@@ -23,6 +31,10 @@ void batch_shutdown(void);
 void batch_push(mesh_t* mesh, material_t* material, mat4 transform, vec4  uv_rect, mat4 pv);
 uint32_t batch_size(void);
 batch_registry_entry_t batch_get_entry(uint32_t index);
+void batch_set_camera_position(vec3 p);
+uint32_t batch_transparent_size(void);
+transparent_entry_t batch_get_transparent_entry(uint32_t index);
+void batch_sort_transparent(void);
 
 
 #endif // BATCH_H_

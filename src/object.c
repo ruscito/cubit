@@ -126,12 +126,19 @@ aabb_t object3d_get_aabb(object3d_t *obj) {
 	return obj->aabb;
 }
 
-/* Normalize and assign the object uv_rect */
+/* Normalize and assign the object uv_rect. The function calculate
+ * an uv clamping for the shader removing 0.5 (half texel) from the
+ * rect passed. This camping help to avoid Atlas Bleeding. The asset
+ * pipeline will be responsable for the padding in the atlas */
 void object3d_set_uv_rect(object3d_t* obj, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    float rect_x = (float)x + 0.5f;
+    float rect_y = (float)y + 0.5f;
+    float rect_z = (float)(x+w) - 0.5f;
+    float rect_w = (float)(y+h) - 0.5f;
     // normalization
-    obj->uv_rect.x = (float)x / (float)obj->material->diffuse_texture->width;
-    obj->uv_rect.y = (float)y / (float)obj->material->diffuse_texture->height;
-    obj->uv_rect.z = (float)(x+w) / (float)obj->material->diffuse_texture->width;
-    obj->uv_rect.w = (float)(y+h) / (float)obj->material->diffuse_texture->height;
+    obj->uv_rect.x = rect_x / (float)obj->material->diffuse_texture->width;
+    obj->uv_rect.y = rect_y / (float)obj->material->diffuse_texture->height;
+    obj->uv_rect.z = rect_z / (float)obj->material->diffuse_texture->width;
+    obj->uv_rect.w = rect_w / (float)obj->material->diffuse_texture->height;
 }
 

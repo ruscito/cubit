@@ -213,6 +213,98 @@ void renderer_end_frame(void) {
     glfwSwapBuffers(window);
 }
 
+static void push_transparent_scene_data(transparent_entry_t *e) {
+    builtin_locations_t* loc = &e->material->shader->locations;
+
+    if (loc->diffuse_texture >= 0)
+        glUniform1i(loc->diffuse_texture, 0);
+    if (loc->normal_texture >= 0)
+        glUniform1i(loc->normal_texture, 1);
+
+    if (loc->ambient_factor >= 0)
+        glUniform1f(loc->ambient_factor, ambient_factor);
+
+    uint32_t count = light_get_count();
+    if (count == 0) return;
+
+    light_t* light = light_get_table();
+
+    if (loc->light_count >= 0)
+        glUniform1i(loc->light_count, count);
+    if (loc->camera_position >= 0)
+        glUniform3fv(loc->camera_position, 1, (float*)&camera_position);
+
+    int32_t shadow_slot = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (light[i].shadow_map != NULL && shadow_slot < MAX_SHADOW_MAPS) {
+            light[i].shadow_index = shadow_slot++;
+        } else {
+            light[i].shadow_index = -1;
+        }
+    }
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (loc->light[i].light_type >= 0)
+            glUniform1i(loc->light[i].light_type, light[i].type);
+        if (loc->light[i].light_color >= 0)
+            glUniform3fv(loc->light[i].light_color, 1, (float*)&light[i].color);
+        if (loc->light[i].light_intensity >= 0)
+            glUniform1f(loc->light[i].light_intensity, light[i].intensity);
+        if (loc->light[i].light_direction >= 0)
+            glUniform3fv(loc->light[i].light_direction, 1, (float*)&light[i].direction);
+        if (loc->light[i].light_position >= 0)
+            glUniform3fv(loc->light[i].light_position, 1, (float*)&light[i].position);
+        if (loc->light[i].constant_attenuation >= 0)
+            glUniform1f(loc->light[i].constant_attenuation, light[i].attenuation.constant);
+        if (loc->light[i].linear_attenuation >= 0)
+            glUniform1f(loc->light[i].linear_attenuation, light[i].attenuation.linear);
+        if (loc->light[i].quadratic_attenuation >= 0)
+            glUniform1f(loc->light[i].quadratic_attenuation, light[i].attenuation.quadratic);
+        if (loc->light[i].cone_inner_cutoff >= 0)
+            glUniform1f(loc->light[i].cone_inner_cutoff, light[i].cone.inner_cutoff);
+        if (loc->light[i].cone_outer_cutoff >= 0)
+            glUniform1f(loc->light[i].cone_outer_cutoff, light[i].cone.outer_cutoff);
+        if (loc->light[i].shadow_index >= 0)
+            glUniform1i(loc->light[i].shadow_index, light[i].shadow_index);
+    }
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (light[i].shadow_index >= 0 && light[i].shadow_map) {
+            int32_t idx = light[i].shadow_index;
+            if (loc->shadow_map[idx] >= 0) {
+                glUniform1i(loc->shadow_map[idx], 2 + idx);
+                glActiveTexture(GL_TEXTURE2 + idx);
+                glBindTexture(GL_TEXTURE_2D, light[i].shadow_map->id);
+            }
+            if (loc->light_vp[idx] >= 0)
+                glUniformMatrix4fv(loc->light_vp[idx], 1, GL_FALSE, (float*)&light[i].shadow_map->vp.m);
+        }
+    }
+}
+
+static void push_transparent_shader_data(transparent_entry_t *e) {
+    builtin_locations_t* loc = &e->material->shader->locations;
+    if (loc->vp >= 0)
+        glUniformMatrix4fv(loc->vp, 1, GL_FALSE, (float*)&e->vp.m);
+    if (loc->surface_color >= 0)
+        glUniform3fv(loc->surface_color, 1, (float*)&e->material->surface_color);
+    if (loc->specular_color >= 0)
+        glUniform3fv(loc->specular_color, 1, (float*)&e->material->specular_color);
+    if (loc->shininess >= 0)
+        glUniform1f(loc->shininess, e->material->shininess);
+    if (loc->emissive_color >= 0)
+        glUniform3fv(loc->emissive_color, 1, (float*)&e->material->emissive_color);
+    if (loc->opacity >= 0)
+        glUniform1f(loc->opacity, e->material->opacity);
+    if (loc->diffuse_texture >= 0) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, e->material->diffuse_texture->id);
+    }
+    if (loc->normal_texture >= 0) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, e->material->normal_texture->id);
+    }
+}
 
 static void push_shader_data(batch_registry_entry_t *e) {
 	builtin_locations_t* loc = &e->material->shader->locations;
@@ -221,11 +313,13 @@ static void push_shader_data(batch_registry_entry_t *e) {
 	if (loc->surface_color >= 0)
 		glUniform3fv(loc->surface_color, 1, (float*)&e->material->surface_color);
 	if (loc->specular_color >= 0)
-	     glUniform3fv(loc->specular_color, 1, (float*)&e->material->specular_color);
+	    glUniform3fv(loc->specular_color, 1, (float*)&e->material->specular_color);
 	if (loc->shininess >= 0)
-	     glUniform1f(loc->shininess, e->material->shininess);
+	    glUniform1f(loc->shininess, e->material->shininess);
 	if (loc->emissive_color >= 0)
-	     glUniform3fv(loc->emissive_color, 1, (float*)&e->material->emissive_color);
+	    glUniform3fv(loc->emissive_color, 1, (float*)&e->material->emissive_color);
+    if (loc->opacity >= 0)
+        glUniform1f(loc->opacity, e->material->opacity);
 	if (loc->diffuse_texture >= 0) {
 		glActiveTexture(GL_TEXTURE0);  // Activate texture at slot 0
 		glBindTexture(GL_TEXTURE_2D, e->material->diffuse_texture->id);
@@ -311,6 +405,52 @@ static void push_scene_data(batch_registry_entry_t *e) {
 	}
 }
 
+/* TRANSPARENT PASS */
+static void transparent_pass(void) {
+    // Order baack to front
+    batch_sort_transparent();
+    // Enable blending of the color
+    glEnable(GL_BLEND);
+    // Calulate the blending with a classic formula
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Depth wite-off: read but not write
+    glDepthMask(GL_FALSE);
+    // Loop trough the transparent object
+    shader_t* current_shader = NULL;
+    for (uint32_t i = 0; i < batch_transparent_size(); i++) {
+        transparent_entry_t e = batch_get_transparent_entry(i);
+        if (current_shader != e.material->shader) {
+            current_shader = e.material->shader;
+            glUseProgram(current_shader->program_id);
+            push_transparent_scene_data(&e);
+        }
+
+        push_transparent_shader_data(&e);
+
+        glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(mat4), &e.transform, GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vec4), &e.uv_rect, GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(e.mesh->vao);
+        //glDrawElements(GL_TRIANGLES, e.mesh->index_count, GL_UNSIGNED_INT, 0);
+        glDrawElementsInstanced(
+            GL_TRIANGLES,
+            e.mesh->index_count,
+            GL_UNSIGNED_INT,
+            0,
+            1
+        );
+    }
+    // Restore depth write
+    glDepthMask(GL_TRUE);
+    // Restore blending off
+    glDisable(GL_BLEND);
+}
+
+/* SHADOW PASS */
 static void shadow_pass(void) {
 	light_t* light = light_get_table();
 	for (uint32_t i = 0; i < light_get_count(); i++) {
@@ -322,9 +462,17 @@ static void shadow_pass(void) {
 			glClear(GL_DEPTH_BUFFER_BIT);
 			shader_t *shader = shader_get_shadow();
 			glUseProgram(shader->program_id);
+
+            // Pass the VP
 			if (shader->locations.vp >= 0)
 				glUniformMatrix4fv(shader->locations.vp, 1, GL_FALSE, (float*)&sm->vp.m);
 
+            // Pass the diffuse texture
+            if (shader->locations.diffuse_texture >=0)
+                glUniform1i(shader->locations.diffuse_texture, 0);
+
+
+            // Shadow cast for opaque objects
 			for (uint32_t j = 0; j < batch_size(); j++) {
 				batch_registry_entry_t e = batch_get_entry(j);
                 // TRANSFORM
@@ -346,6 +494,11 @@ static void shadow_pass(void) {
 
 				glBindBuffer(GL_ARRAY_BUFFER, 0);
 				glBindVertexArray(e.mesh->vao);
+
+                // binda texture
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+
 				glDrawElementsInstanced(
 					GL_TRIANGLES,
 					e.mesh->index_count,
@@ -354,16 +507,48 @@ static void shadow_pass(void) {
 					e.count
 				);
 			}
+
+            // Shadow cast for transparent objects
+            for (uint32_t i = 0; i < batch_transparent_size(); i++) {
+                transparent_entry_t e = batch_get_transparent_entry(i);
+                // Skipp shadow
+                if (!e.material->cast_shadow) continue;
+
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(mat4), &e.transform, GL_DYNAMIC_DRAW);
+
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vec4), &e.uv_rect, GL_DYNAMIC_DRAW);
+
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                glBindVertexArray(e.mesh->vao);
+
+                // binda texture
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+
+                glDrawElementsInstanced(
+                    GL_TRIANGLES,
+                    e.mesh->index_count,
+                    GL_UNSIGNED_INT,
+                    0,
+                    1
+                );
+            }
+
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			glViewport(0, 0, state.gfx->width, state.gfx->height);
 		}
 	}
 }
 
+
 void renderer_draw(void) {
 	glClearColor(0.4, 0.45, 0.5, 1.0); // Default background
 	glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 
+
+    // Clean
 	for (size_t i = 0; i < state.command_count; i++){
 		render_command_t cmd = state.command_queue[i];
 		switch(state.command_queue[i].type) {
@@ -378,7 +563,10 @@ void renderer_draw(void) {
 	}
 	state.command_count = 0;
 
+    // Shadow Pass
 	shadow_pass();
+
+    // Opaque Pass
 	shader_t* current_shader = NULL;
 	for (uint32_t i = 0; i < batch_size(); i++) {
 		batch_registry_entry_t e = batch_get_entry(i);
@@ -415,6 +603,9 @@ void renderer_draw(void) {
 			e.count
 		);
 	};
+
+    // Transparent Pass
+    transparent_pass();
 }
 
 void renderer_init(gfx_context* ctx) {
@@ -433,7 +624,7 @@ void renderer_init(gfx_context* ctx) {
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_BACK);  // Cull the back faces
 	glFrontFace(GL_CCW);  // Counter-Clockwise is the "front" (matches the corrected array)
-						  //
+    glEnable(GL_FRAMEBUFFER_SRGB); // Gamma Correction
 
 	// batch registry init
 	batch_init();
@@ -621,11 +812,17 @@ void backend_texture_new(texture_t*  t, unsigned char* raw_pixel) {
 	 // Upload pixel data
 	 switch (t->channels) {
 		 case 3:
-	 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, t->width, t->height, 0, GL_RGB, GL_UNSIGNED_BYTE, raw_pixel);
-			break;
+             if (t->type == COLOR_TEXTURE)
+	 		     glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, t->width, t->height, 0, GL_RGB, GL_UNSIGNED_BYTE, raw_pixel);
+             else
+	 		     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, t->width, t->height, 0, GL_RGB, GL_UNSIGNED_BYTE, raw_pixel);
+			 break;
 		 case 4:
-	 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, t->width, t->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, raw_pixel);
-			break;
+             if (t->type == COLOR_TEXTURE)
+	 		     glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, t->width, t->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, raw_pixel);
+             else
+	 		     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t->width, t->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, raw_pixel);
+			 break;
 		default:
 			;
 	 }

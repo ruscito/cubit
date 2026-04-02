@@ -124,7 +124,9 @@ float ambient_factor_get(void) {
 void camera_set_active(camera_t* c) {
     active_camera = c;
     camera_update(c);
-    backend_set_camera_position(camera_get_position(c));
+    vec3 p = camera_get_position(c);
+    backend_set_camera_position(p);
+    batch_set_camera_position(p);
     vec3 corners[8];
     camera_get_frustum_corners(c, corners, shadow_distance);
     backend_set_active_frustum_corners(corners);
