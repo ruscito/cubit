@@ -69,8 +69,8 @@ void backend_shutdown(void);
 void backend_set_mouse_mode(int32_t mode);
 void backend_ambient_factor_set(float f);
 float backend_ambient_factor_get(void);
-void backend_shadow_map_new(shadow_map_t* sm);
-void backend_shadow_map_destroy(shadow_map_t *sm);
+void backend_shadow_atlas_new(shadow_atlas_t* sa);
+void backend_shadow_atlas_destroy(shadow_atlas_t* sa);
 void backend_set_camera_position(vec3 pos);
 void backend_set_active_frustum_corners(vec3* corners);
 

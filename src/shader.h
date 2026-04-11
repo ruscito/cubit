@@ -4,9 +4,9 @@
 #define SHADER_H_
 
 #include "cubit_types.h"
+#include "light.h"
 
 #define MAX_UNIFORMS    16
-#define MAX_SHADOW_MAPS 4
 
 struct uniform_table_entry_t{
 	char*	name;		// Uniform name as written in the glsl shader
@@ -26,7 +26,6 @@ typedef struct {
 	int32_t quadratic_attenuation;
 	int32_t cone_inner_cutoff;
 	int32_t cone_outer_cutoff;
-    int32_t shadow_index;
 } light_uniforms_t;
 
 
@@ -53,8 +52,11 @@ struct builtin_locations_t {
 	int32_t diffuse_texture;
 	int32_t normal_texture;
 	// Shadow map
-	int32_t shadow_map[MAX_SHADOW_MAPS];
-    int32_t light_vp[MAX_SHADOW_MAPS];
+	int32_t shadow_atlas;               // The atlas of all the shadows
+    int32_t light_vp[MAX_LIGHTS];       // MAX_LIGHTS per frame can have VP
+    int32_t shadow_rect[MAX_LIGHTS];    // MAX_LIGHT shadow tile per frame:
+                                        // though shadow_atlas can contains up MAX_SHADOW_TILES
+                                        // ony MAX_LIGHTS can be active per frame
 };
 
 

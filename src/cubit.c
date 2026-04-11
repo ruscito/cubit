@@ -1,6 +1,7 @@
 // cubit.c
 
 #include "backend.h"
+#include "shadow.h"
 
 
 /*
@@ -22,12 +23,15 @@ int main(void) {
 		.width = 800,
 		.height = 450,
 		.title = "GAME ENGINE",
-		.fps = 60
+		.fps = 60,
+        .shadow_atlas_size = DEFAULT_SHADOW_ATLAS_SIZE,
+        .shadow_tile_size = DEFAULT_SHADOW_TILE_SIZE
 	};
 
 	application_config(&cfg);
 	gfx_context *gc = gfx_context_init(&cfg);
 	renderer_init(gc);
+    shadow_atlas_init(cfg.shadow_atlas_size, cfg.shadow_tile_size);
 	application_init();
     renderer_loop_setup();
 	while (!renderer_should_close()){
@@ -40,6 +44,7 @@ int main(void) {
 		renderer_end_frame();
 	}
 	application_shutdown();
+    shadow_atlas_shutdown();
 	gfx_context_shutdown(gc);
 	renderer_shutdown();
 }

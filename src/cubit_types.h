@@ -35,7 +35,6 @@
 
 #define CAMERA_MODE_TARGET 0	// Orbits/looks at a target point
 #define CAMERA_MODE_FREE   1	// Free roation using yaw/pitch
-#define MAX_LIGHTS 16
 
 typedef enum {
     COLOR_TEXTURE,
@@ -91,7 +90,8 @@ typedef struct shader_t shader_t;
 typedef struct light_t light_t;
 typedef struct mesh_t mesh_t;
 typedef struct texture_t texture_t;
-typedef struct shadow_map_t shadow_map_t;
+typedef struct shadow_tile_t shadow_tile_t;
+typedef struct shadow_atlas_t shadow_atlas_t;
 
 #define COLOR_BLACK   (color_t){0.0f, 0.0f, 0.0f, 1.0f}
 #define COLOR_WHITE   (color_t){1.0f, 1.0f, 1.0f, 1.0f}
@@ -119,6 +119,8 @@ typedef struct {
 	int height;
 	char* title;
 	int fps;
+    uint32_t shadow_atlas_size;
+    uint32_t shadow_tile_size;
 } app_config_t;
 
 /*

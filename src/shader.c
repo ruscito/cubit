@@ -10,7 +10,7 @@
 
 // Lit shader sources — replace the existing default_vs_src and default_fs_src in shader.c
 
-static const char* default_vs_src = "#version 330 core\n"
+static const char default_vs_src[] = "#version 330 core\n"
 	"layout (location = 0) in vec3 aPos;\n"
 	"layout (location = 1) in vec3 aNormal;\n"
 	"layout (location = 2) in vec2 aUV;\n"
@@ -33,137 +33,142 @@ static const char* default_vs_src = "#version 330 core\n"
 	"	gl_Position = vp * world_pos;\n"
 	"}\0";
 
-static const char* default_fs_src = "#version 330 core\n"
-	"#define MAX_LIGHTS 16\n"
-	"#define LIGHT_OFF 0\n"
-	"#define LIGHT_DIRECTIONAL 1\n"
-	"#define LIGHT_POINT 2\n"
-	"#define LIGHT_SPOT 3\n"
-	"\n"
-	"struct Light {\n"
-	"	int light_type;\n"
-	"	vec3 light_color;\n"
-	"	float light_intensity;\n"
-	"	vec3 light_direction;\n"
-	"	vec3 light_position;\n"
-	"	float constant_attenuation;\n"
-	"	float linear_attenuation;\n"
-	"	float quadratic_attenuation;\n"
-	"	float cone_inner_cutoff;\n"
-	"	float cone_outer_cutoff;\n"
-    "   int shadow_index;\n"            // -1 no shadow 0 to 3 othewise
-	"};\n"
-	"\n"
-	"uniform Light light[MAX_LIGHTS];\n"
-	"uniform int light_count;\n"
-	"uniform float ambient_factor;\n"
-	"uniform vec3 camera_position;\n"
-	"\n"
-	"uniform vec3 surface_color;\n"
-	"uniform vec3 specular_color;\n"
-	"uniform float shininess;\n"
-    "uniform vec3 emissive_color;\n"
-	"uniform float opacity;\n"
+static const char default_fs_src[] = "\n"
+    "struct Light {\n"
+    "   int light_type;\n"
+    "   vec3 light_color;\n"
+    "   float light_intensity;\n"
+    "   vec3 light_direction;\n"
+    "   vec3 light_position;\n"
+    "   float constant_attenuation;\n"
+    "   float linear_attenuation;\n"
+    "   float quadratic_attenuation;\n"
+    "   float cone_inner_cutoff;\n"
+    "   float cone_outer_cutoff;\n"
+    "};\n"
     "\n"
-	"uniform sampler2D diffuse_texture;\n"
-	"uniform sampler2D normal_texture;\n"
-	"uniform sampler2D shadow_map[4];\n"
-	"uniform mat4 light_vp[4];\n"
-	"\n"
-	"in vec3 frag_position;\n"
-	"in vec3 frag_normal;\n"
-	"in vec3 frag_tangent;\n"
-	"in vec3 frag_bitangent;\n"
-	"in vec2 frag_uv;\n"
-	"out vec4 fragColor;\n"
-	"\n"
-	"float calculate_shadow(int pos) {\n"
-    "	vec4 light_space_pos = light_vp[pos] * vec4(frag_position, 1.0);\n"
-    "	vec3 proj = light_space_pos.xyz / light_space_pos.w;\n"
-    "	proj = proj * 0.5 + 0.5;\n"
-	"\n"
-    "	if (proj.z > 1.0) return 0.0;\n"
-	"\n"
-    "	float bias = 0.005;\n"
-    "	float shadow = 0.0;\n"
-    "	vec2 texel_size = vec2(1.0) / vec2(textureSize(shadow_map[pos], 0));\n"
-    "	for (int x = -2; x <= 2; x++) {\n"
-    "	    for (int y = -2; y <= 2; y++) {\n"
-    "	        float depth = texture(shadow_map[pos], proj.xy + vec2(x, y) * texel_size).r;\n"
-    "	        shadow += proj.z - bias > depth ? 1.0 : 0.0;\n"
-    "	    }\n"
-    "	}\n"
-    "	return shadow / 25.0;\n"
-	"}\n"
-	"\n"
-	"void main() {\n"
-	"   vec3 normal;\n"
-	"	if (length(frag_tangent) > 0.001) {\n"
-	"		mat3 TBN = mat3(frag_tangent, frag_bitangent, frag_normal);\n"
-	"		vec3 map_normal = texture(normal_texture, frag_uv).rgb *2.0 - 1.0;\n"
-	"		normal = normalize(TBN * map_normal);\n"
-	"	} else {\n"
-	"		normal = normalize(frag_normal);\n"
-	"	}\n"
-	"	vec3 view_dir = normalize(camera_position - frag_position);\n"
-	"	vec4 tex_color = texture(diffuse_texture, frag_uv).rgba;\n"
-    "   // if (tex_color.a * opacity < 0.5)\n"
+    "uniform Light light[MAX_LIGHTS];\n"
+    "uniform int light_count;\n"
+    "uniform float ambient_factor;\n"
+    "uniform vec3 camera_position;\n"
+    "\n"
+    "uniform vec3 surface_color;\n"
+    "uniform vec3 specular_color;\n"
+    "uniform float shininess;\n"
+    "uniform vec3 emissive_color;\n"
+    "uniform float opacity;\n"
+    "\n"
+    "uniform sampler2D diffuse_texture;\n"
+    "uniform sampler2D normal_texture;\n"
+    "uniform sampler2D shadow_atlas;\n"
+    "uniform mat4 light_vp[MAX_LIGHTS];\n"
+    "uniform vec4 shadow_rect[MAX_LIGHTS];\n"
+    "\n"
+    "in vec3 frag_position;\n"
+    "in vec3 frag_normal;\n"
+    "in vec3 frag_tangent;\n"
+    "in vec3 frag_bitangent;\n"
+    "in vec2 frag_uv;\n"
+    "out vec4 fragColor;\n"
+    "\n"
+    // PCF 5x5 kernel — unchanged, but now always samples from the atlas
+    "float pcf_shadow(vec3 proj) {\n"
+    "   float bias = 0.005;\n"
+    "   float shadow = 0.0;\n"
+    "   vec2 texel_size = vec2(1.0) / vec2(textureSize(shadow_atlas, 0));\n"
+    "   for (int x = -2; x <= 2; x++) {\n"
+    "       for (int y = -2; y <= 2; y++) {\n"
+    "           float depth = texture(shadow_atlas, proj.xy + vec2(x, y) * texel_size).r;\n"
+    "           shadow += proj.z - bias > depth ? 1.0 : 0.0;\n"
+    "       }\n"
+    "   }\n"
+    "   return shadow / 25.0;\n"
+    "}\n"
+    "\n"
+    // Project fragment into light space, remap into tile region, sample atlas
+    "float calculate_shadow(int i) {\n"
+    "   vec4 light_space_pos = light_vp[i] * vec4(frag_position, 1.0);\n"
+    "   vec3 proj = light_space_pos.xyz / light_space_pos.w;\n"
+    "   proj = proj * 0.5 + 0.5;\n"
+    "\n"
+    "   if (proj.z > 1.0) return 0.0;\n"
+    "\n"
+    "   // Remap proj.xy from full [0,1] into this light's tile region\n"
+    "   vec4 rect = shadow_rect[i];\n"
+    "   proj.x = rect.x + proj.x * (rect.z - rect.x);\n"
+    "   proj.y = rect.y + proj.y * (rect.w - rect.y);\n"
+    "\n"
+    "   return pcf_shadow(proj);\n"
+    "}\n"
+    "\n"
+    "void main() {\n"
+    "   vec3 normal;\n"
+    "   if (length(frag_tangent) > 0.001) {\n"
+    "       mat3 TBN = mat3(frag_tangent, frag_bitangent, frag_normal);\n"
+    "       vec3 map_normal = texture(normal_texture, frag_uv).rgb * 2.0 - 1.0;\n"
+    "       normal = normalize(TBN * map_normal);\n"
+    "   } else {\n"
+    "       normal = normalize(frag_normal);\n"
+    "   }\n"
+    "   vec3 view_dir = normalize(camera_position - frag_position);\n"
+    "   vec4 tex_color = texture(diffuse_texture, frag_uv).rgba;\n"
     "   if (tex_color.a < 0.5)\n"
     "       discard;\n"
-	"   vec3 base_color = surface_color * tex_color.rgb;\n"
-   	"\n"
-	"	vec3 result = vec3(0.0);\n"
-	"\n"
-	"	for (int i = 0; i < light_count; i++) {\n"
-	"		if (light[i].light_type == LIGHT_OFF) continue;\n"
-	"\n"
-	"		vec3 light_dir;\n"
-	"		float attenuation = 1.0;\n"
-	"		float spot_factor = 1.0;\n"
-	"\n"
-	"		if (light[i].light_type == LIGHT_DIRECTIONAL) {\n"
-	"			light_dir = normalize(-light[i].light_direction);\n"
-	"		} else {\n"
-	"			vec3 to_light = light[i].light_position - frag_position;\n"
-	"			float distance = length(to_light);\n"
-	"			light_dir = to_light / distance;\n"
-	"			attenuation = 1.0 / (light[i].constant_attenuation\n"
-	"				+ light[i].linear_attenuation * distance\n"
-	"				+ light[i].quadratic_attenuation * distance * distance);\n"
-	"\n"
-	"			if (light[i].light_type == LIGHT_SPOT) {\n"
-	"				float theta = dot(light_dir, normalize(-light[i].light_direction));\n"
-	"				float inner = cos(light[i].cone_inner_cutoff);\n"
-	"				float outer = cos(light[i].cone_outer_cutoff);\n"
-	"				spot_factor = clamp((theta - outer) / (inner - outer), 0.0, 1.0);\n"
-	"			}\n"
-	"		}\n"
-	"\n"
-	"		float diff = max(dot(normal, light_dir), 0.0);\n"
-	"		vec3 half_dir = normalize(light_dir + view_dir);\n"
-	"		float spec = pow(max(dot(normal, half_dir), 0.0), shininess);\n"
-	"		if (diff <= 0.0) spec = 0.0;\n"
-	"\n"
-	"		vec3 light_contrib = light[i].light_color * light[i].light_intensity;\n"
-	"		vec3 ambient = ambient_factor * light_contrib * base_color;\n"
-	"		vec3 diffuse = diff * light_contrib * base_color;\n"
-	"		vec3 specular = spec * light_contrib * specular_color;\n"
-	"\n"
+    "   vec3 base_color = surface_color * tex_color.rgb;\n"
+    "\n"
+    "   vec3 result = vec3(0.0);\n"
+    "\n"
+    "   for (int i = 0; i < light_count; i++) {\n"
+    "       if (light[i].light_type == LIGHT_OFF) continue;\n"
+    "\n"
+    "       vec3 light_dir;\n"
+    "       float attenuation = 1.0;\n"
+    "       float spot_factor = 1.0;\n"
+    "\n"
+    "       if (light[i].light_type == LIGHT_DIRECTIONAL) {\n"
+    "           light_dir = normalize(-light[i].light_direction);\n"
+    "       } else {\n"
+    "           vec3 to_light = light[i].light_position - frag_position;\n"
+    "           float distance = length(to_light);\n"
+    "           light_dir = to_light / distance;\n"
+    "           attenuation = 1.0 / (light[i].constant_attenuation\n"
+    "               + light[i].linear_attenuation * distance\n"
+    "               + light[i].quadratic_attenuation * distance * distance);\n"
+    "\n"
+    "           if (light[i].light_type == LIGHT_SPOT) {\n"
+    "               float theta = dot(light_dir, normalize(-light[i].light_direction));\n"
+    "               float inner = cos(light[i].cone_inner_cutoff);\n"
+    "               float outer = cos(light[i].cone_outer_cutoff);\n"
+    "               spot_factor = clamp((theta - outer) / (inner - outer), 0.0, 1.0);\n"
+    "           }\n"
+    "       }\n"
+    "\n"
+    "       float diff = max(dot(normal, light_dir), 0.0);\n"
+    "       vec3 half_dir = normalize(light_dir + view_dir);\n"
+    "       float spec = pow(max(dot(normal, half_dir), 0.0), shininess);\n"
+    "       if (diff <= 0.0) spec = 0.0;\n"
+    "\n"
+    "       vec3 light_contrib = light[i].light_color * light[i].light_intensity;\n"
+    "       vec3 ambient = ambient_factor * light_contrib * base_color;\n"
+    "       vec3 diffuse = diff * light_contrib * base_color;\n"
+    "       vec3 specular = spec * light_contrib * specular_color;\n"
+    "\n"
+    "       // shadow_rect.z > 0 means this light has a tile in the atlas\n"
     "       float shadow_factor = 1.0;\n"
-    "       if (light[i].shadow_index >= 0)\n"
-    "            shadow_factor = (1.0 - calculate_shadow(light[i].shadow_index));\n"
-	"		result += ambient + (diffuse + specular) * attenuation * spot_factor * shadow_factor;\n"
-	"	}\n"
-	"\n"
-	"	result += emissive_color;\n"
-	"\n"
-	"	if (light_count == 0) {\n"
-	"		result = base_color;\n"
-	"	}\n"
-	"\n"
-	"	fragColor = vec4(result, tex_color.a * opacity);\n"
-	"}\0";
-
+    "       if (shadow_rect[i].z > 0.0)\n"
+    "           shadow_factor = 1.0 - calculate_shadow(i);\n"
+    "\n"
+    "       result += ambient + (diffuse + specular) * attenuation * spot_factor * shadow_factor;\n"
+    "   }\n"
+    "\n"
+    "   result += emissive_color;\n"
+    "\n"
+    "   if (light_count == 0) {\n"
+    "       result = base_color;\n"
+    "   }\n"
+    "\n"
+    "   fragColor = vec4(result, tex_color.a * opacity);\n"
+    "}\0";
 
 
 static const char* unlit_vs_src = "#version 330 core\n"
@@ -224,11 +229,9 @@ static int32_t get_uniform_location(shader_t* s, const char* uniform, uint32_t p
 	return glGetUniformLocation(s->program_id, buffer);
 }
 
-/*
- * Resolve all known built-in uniform names against a compiled
+/* Resolve all known built-in uniform names against a compiled
  * shader program. Returns -1 for any uniform not found in the
- * shader — the renderer skips those at draw time.
- */
+ * shader — the renderer skips those at draw time.*/
 static void resolve_builtin_locations(shader_t* s) {
 	// Material locations:
 	s->locations.vp             = glGetUniformLocation(s->program_id, "vp");
@@ -250,7 +253,6 @@ static void resolve_builtin_locations(shader_t* s) {
 		s->locations.light[i].quadratic_attenuation = get_uniform_location(s, "quadratic_attenuation", i);
 		s->locations.light[i].cone_inner_cutoff = get_uniform_location(s, "cone_inner_cutoff", i);
 		s->locations.light[i].cone_outer_cutoff = get_uniform_location(s, "cone_outer_cutoff", i);
-        s->locations.light[i].shadow_index = get_uniform_location(s, "shadow_index", i);
 	}
 
  	s->locations.light_count  = glGetUniformLocation(s->program_id, "light_count");
@@ -263,20 +265,21 @@ static void resolve_builtin_locations(shader_t* s) {
 	// Ambient related
 	s->locations.ambient_factor = glGetUniformLocation(s->program_id, "ambient_factor");
 
-	// Shadow map
-    for (uint32_t i = 0; i < MAX_SHADOW_MAPS; i++) {
-        char shadow_map[32];
+	// Shadow Atlas
+    s->locations.shadow_atlas = glGetUniformLocation(s->program_id, "shadow_atlas");
+    for (uint32_t i = 0; i < MAX_LIGHTS; i++) {
+        char shadow_rect[32];
         char light_vp[32];
-	    sprintf(shadow_map, "shadow_map[%d]", i);
+	    sprintf(shadow_rect, "shadow_rect[%d]", i);
 	    sprintf(light_vp, "light_vp[%d]", i);
-	    s->locations.shadow_map[i] = glGetUniformLocation(s->program_id, shadow_map);
+	    s->locations.shadow_rect[i] = glGetUniformLocation(s->program_id, shadow_rect);
 	    s->locations.light_vp[i] = glGetUniformLocation(s->program_id, light_vp);
     }
 }
 
 
 
-
+/* It creates the vertex shader and the fragment shader */
 shader_t *shader_create(const char* vs, const char* fs) {
 	uint32_t vertex_shader = glCreateShader(GL_VERTEX_SHADER);
 	glShaderSource(vertex_shader, 1, &vs, NULL);
@@ -384,8 +387,31 @@ void shader_destroy(shader_t* s) {
 	}
 }
 
+
+/* Initialize the shader module and creates the default
+ * shaders lit, unlit and shadow. For the lit shader (AKA default_xx)
+ * the fragment header is generated dynamically to account for
+ * CUBIT defines and keep the engine in sync */
 void shader_init(void) {
-    default_shader = shader_create(default_vs_src, default_fs_src);
+	// Build the header for the lit shader.
+	// Values come from C so shader and engine stay in sync.
+	static char fs_src[8192];
+	sprintf(fs_src,
+		"#version 330 core\n"
+		"#define MAX_LIGHTS %d\n"
+		"#define LIGHT_OFF %d\n"
+		"#define LIGHT_DIRECTIONAL %d\n"
+		"#define LIGHT_POINT %d\n"
+		"#define LIGHT_SPOT %d\n",
+		MAX_LIGHTS,
+		LIGHT_OFF,
+		LIGHT_DIRECTIONAL,
+		LIGHT_POINT,
+		LIGHT_SPOT
+	);
+
+    strcat(fs_src, default_fs_src);
+    default_shader = shader_create(default_vs_src, fs_src);
 	if (default_shader == NULL) {
 		fprintf(stderr, "Failed to create default shader\n");
 		exit(-1);

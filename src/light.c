@@ -1,6 +1,7 @@
 // light.c
 
 #include "light.h"
+#include "shadow.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -22,9 +23,9 @@ static void reset_light(light_t* l) {
 	l->attenuation.quadratic = DEFAULT_ATT_QUADRATIC;
 	l->cone.inner_cutoff = DEFAULT_CONE_INNER * DEG2RAD;
 	l->cone.outer_cutoff = DEFAULT_CONE_OUTER * DEG2RAD;
-	l->shadow_map = NULL;
-    l->shadow_index = -1;
+    l->tile_index = -1;
 }
+
 
 void light_init(void) {
 	light_table.count = 0;
@@ -100,7 +101,20 @@ void light_set_cone(int32_t index, float inner_degrees, float outer_degrees) {
 	light_table.lights[index].cone.outer_cutoff = outer_degrees * DEG2RAD;
 }
 
-void light_set_shadow_map(int32_t index, shadow_map_t *sm) {
+/* Get the index of the light in the light table, travers the
+ * shadow tiles atlas, find the first available assigne the
+ * position to the light and mark the tile as occupied */
+void light_enable_shadow(int32_t index) {
 	if (index < 0 || index >= (int32_t)light_table.count) return;
-	light_table.lights[index].shadow_map = sm;
+    int32_t pos = shadow_get_index_available_tile();
+    if (pos<0) return;
+	light_table.lights[index].tile_index = pos;
+    shadow_set_tile_occupied(pos, true);
 }
+
+void light_disable_shadow(int32_t index) {
+	if (index < 0 || index >= (int32_t)light_table.count) return;
+    shadow_set_tile_occupied(light_table.lights[index].tile_index, false);
+	light_table.lights[index].tile_index = -1;
+}
+

@@ -106,7 +106,8 @@ void light_set_direction(int32_t index, vec3 direction);
 void light_set_position(int32_t index, vec3 position);
 void light_set_attenuation(int32_t index, float constant, float linear, float quadratic);
 void light_set_cone(int32_t index, float inner_degrees, float outer_degrees);
-void light_set_shadow_map(int32_t index, shadow_map_t *sm);
+void light_enable_shadow(int32_t index);
+void light_disable_shadow(int32_t index);
 
 // Texture
 texture_t* texture_create(const char* filename, TextureTypes typ);
@@ -117,8 +118,6 @@ void ambient_factor_set(float f);
 float ambient_factor_get(void);
 
 // Shadow map
-shadow_map_t *shadow_map_create(void);
-void shadow_map_destroy(shadow_map_t* s);
 void shadow_distance_set(float sd);
 float shadow_distance_get(void);
 

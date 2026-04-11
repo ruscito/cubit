@@ -5,18 +5,46 @@
 
 #include "cubit_types.h"
 
-#define DEFAULT_SM_SIZE 8192
-#define DEFAULT_SM_DISTANCE 20
-
-struct shadow_map_t {
-	uint32_t id;
-	uint32_t fbo;
-	uint32_t size; // framebuffer is square 1024x1024 by default
-	mat4 vp;
-	bool dirty;
-};
+#define DEFAULT_SHADOW_ATLAS_SIZE   8192
+#define DEFAULT_SHADOW_TILE_SIZE    2048
+#define DEFAULT_SHADOW_TILES        64      // Default max nuber of shadow tails
+#define DEFAULT_SM_DISTANCE         20      // TODO:maybe to be removed
 
 
-void shadow_map_update(shadow_map_t* s, light_t* light, vec3* corners);
+/* A tile is a region inside the shadow atlas.
+ * Each shadow-casting light gets one tile to render
+ * its depth into. The tile knows where it sits in the
+ * atlas (pixel coords for glViewport) and its normalized
+ * rect (for the fragment shader to sample the right area) */
+struct shadow_tile_t{
+	uint32_t x;         // pixel position in atlas (left)
+	uint32_t y;         // pixel position in atlas (bottom)
+	uint32_t size;      // tile width/height in pixels
+	vec4 rect;          // normalized coords (u_min, v_min, u_max, v_max)
+	mat4 vp;            // light view-projection for this tile
+	bool occupied;      // true if a light owns this tile
+} ;
+
+
+/* The atlas owns the single FBO and depth texture
+ * that all shadow maps share. Created once at renderer
+ * init, destroyed at shutdown */
+struct shadow_atlas_t {
+	uint32_t fbo;           // single framebuffer
+	uint32_t texture_id;    // single depth texture
+	uint32_t atlas_size;    // total atlas size in pixels (e.g. 8192)
+	uint32_t tile_size;     // per-tile size in pixels (e.g. 2048)
+	uint32_t tile_count;    // total tiles: (atlas_size/tile_size)^2
+	shadow_tile_t *tiles;
+} ;
+
+
+// Atlas lifecycle (called by renderer)
+void shadow_atlas_init(uint32_t atlas_size, uint32_t tile_size);
+void shadow_atlas_shutdown(void);
+shadow_atlas_t* shadow_atlas_get(void);
+int32_t shadow_get_index_available_tile(void);
+void shadow_set_tile_occupied(uint32_t index, bool status);
+void shadow_map_update(light_t* light, vec3 *corners);
 
 #endif

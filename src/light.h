@@ -6,6 +6,7 @@
 #include "cubit_types.h"
 
 
+#define MAX_LIGHTS 16
 #define DEFAULT_INTENSITY		1.0f
 #define DEFAULT_ATT_CONSTANT	1.0f
 #define DEFAULT_ATT_LINEAR		0.09f
@@ -29,8 +30,8 @@ struct light_t {
 		float inner_cutoff;
 		float outer_cutoff;
 	} cone;
-	shadow_map_t* shadow_map;
-    int32_t shadow_index;
+    int32_t tile_index;         // -1 no shadow cast oterwise the tile
+                                // in the shadow atlas
 };
 
 void light_init(void);

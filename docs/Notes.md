@@ -70,23 +70,25 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - Ambient factor: scene-level uniform (default 0.1), game-controllable via `ambient_factor_set()`/`ambient_factor_get()`
 - Camera position forwarded via simple static overwrite in `backend.c`
 
-### Shadow Mapping System
-- **Multi-shadow support**: up to 4 simultaneous shadow-casting lights (`MAX_SHADOW_MAPS 4`), any combination of directional and spot lights
-- `shadow_map_t`: FBO handle, depth texture handle (id), size (square, default 8192), light VP matrix, dirty flag
-- `shadow.c/h` owns creation, destruction, and VP recalculation; `backend.c` owns OpenGL resource creation (FBO + depth texture)
-- **Shadow slot assignment**: `push_scene_data` iterates lights each frame, assigns shadow_index 0–3 to lights with `shadow_map != NULL`, resets others to -1. Assignment happens before light data push so GPU receives correct indices
-- **Shadow pass**: `shadow_pass()` in `backend.c` runs before main draw loop, iterates all lights with attached shadow maps, renders scene depth-only using shadow shader with each light's VP. Shadow shader samples diffuse texture and discards fragments with alpha below 0.5 (alpha cutout), so shadows of textured objects (leaves, fences) have correct holes. Backend binds each batch entry's diffuse texture before draw. Transparent objects with `cast_shadow == false` are skipped
-- **Directional light frustum-fitting**: 8 corners of the active camera's frustum (clamped by shadow distance) are transformed into light space, AABB bounds determine orthographic projection. Light positioned at frustum center offset along inverted direction. Z bounds negated/swapped for OpenGL convention
+### Shadow Mapping System (Atlas-Based)
+- **Shadow atlas**: all shadow-casting lights share a single depth texture and single FBO. Each light writes to a tile region via `glViewport`. Configurable via `app_config_t`: `shadow_atlas_size` (default 8192) and `shadow_tile_size` (default 2048). Tile count = `(atlas_size/tile_size)²`, dynamically allocated
+- **`shadow_tile_t`**: pixel position (x, y) for `glViewport`, tile size, normalized `vec4 rect` for shader sampling, `mat4 vp` (light view-projection), `bool occupied`
+- **`shadow_atlas_t`**: single FBO, single depth texture, atlas/tile sizes, tile count, `malloc`'d tile array. Created by `shadow_atlas_init`, GPU resources via `backend_shadow_atlas_new`
+- **Shadows as light property**: `light_t` has `int32_t tile_index` (default -1). No separate `shadow_map_t` — eliminated as redundant. `light_enable_shadow(index)` finds free tile, marks occupied, stores tile_index. `light_disable_shadow(index)` releases tile, resets to -1
+- **No shadow slot assignment**: old `shadow_index` mapping eliminated. Shader arrays `light_vp[MAX_LIGHTS]` and `shadow_rect[MAX_LIGHTS]` indexed directly by light index. Single `shadow_atlas` sampler replaces old `shadow_map[4]` array
+- **Shadow pass**: `shadow_pass()` binds atlas FBO once, clears once, then per shadow-casting light (`tile_index >= 0`): calls `shadow_map_update` to compute VP on tile, sets `glViewport` to tile region, renders scene with tile's VP. Restores default FBO/viewport once at end
+- **Fragment shader shadow sampling**: `calculate_shadow(i)` projects fragment via `light_vp[i]`, remaps projected UV into tile region using `shadow_rect[i]`, samples from `shadow_atlas`. Lights without shadow have `shadow_rect` = zero vec4, shader skips them via `shadow_rect[i].z > 0.0` check
+- **Directional light frustum-fitting**: 8 corners of the active camera's frustum (clamped by shadow distance) transformed into light space, AABB bounds determine orthographic projection. Light positioned at frustum center offset along inverted direction. Z bounds negated/swapped for OpenGL convention
 - **Shadow distance**: configurable scene-level value (default 50), controls how far from the camera directional shadows extend. `camera_get_frustum_corners()` receives far override as `min(camera.far, shadow_distance)`. Game-facing getter/setter: `shadow_distance_set()`/`shadow_distance_get()`
 - **Spot light projection**: perspective (FOV = 2 × outer_cutoff, aspect 1.0), fixed position and direction — no frustum-fitting needed
-- **Border color**: shadow map depth texture uses `GL_CLAMP_TO_BORDER` with border color (1,1,1,1), so fragments outside shadow map coverage read as fully lit
-- PCF (Percentage Closer Filtering): 5×5 kernel for soft shadow edges
+- **Border color**: atlas depth texture uses `GL_CLAMP_TO_BORDER` with border color (1,1,1,1), so fragments outside coverage read as fully lit
+- PCF (Percentage Closer Filtering): 5×5 kernel for soft shadow edges, samples from atlas coordinates
 - Shadow bias (0.005) to prevent shadow acne
 - Ambient light unaffected by shadows (only diffuse+specular multiplied by shadow factor)
-- Game API: `shadow_map_create()`, `shadow_map_destroy()`, `light_set_shadow_map(index, sm)`, `shadow_distance_set()`/`shadow_distance_get()`
+- Game API: `light_enable_shadow(index)`, `light_disable_shadow(index)`, `shadow_distance_set()`/`shadow_distance_get()`
 
 ### Init Order
-`shader_init()` → `texture_init()` → `light_init()` → `material_init()`. Shutdown reverses.
+`shader_init()` → `texture_init()` → `light_init()` → `material_init()`. Then `shadow_atlas_init()` (called from `cubit.c` after `renderer_init`). Shutdown reverses.
 
 ## Completed Stages
 
@@ -108,29 +110,159 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 16. **Gamma Correction / sRGB Pipeline** — `TextureTypes` enum (COLOR_TEXTURE/DATA_TEXTURE) on `texture_t`, color textures as `GL_SRGB8`/`GL_SRGB8_ALPHA8`, data textures as `GL_RGB8`/`GL_RGBA8`, `GL_FRAMEBUFFER_SRGB` enabled at init, lighting now computed in linear space
 17. **Transparency Support** — `float opacity` on material (default 1.0), dual batch registry (opaque instanced + transparent individual), transparent pass with alpha blending (`SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`), depth read yes/write no, back-to-front sorting by distance² from camera, alpha cutout via `discard` when `tex_color.a * opacity < 0.5`, fragment output alpha = `tex_color.a * opacity`, `bool cast_shadow` on material (default true) allows game dev to disable shadow casting for transparent objects
 18. **Alpha Cutout in Shadow Pass** — shadow shader upgraded from empty depth-only to UV-aware: accepts UV (location 2) + uv_rect (location 10), remaps UVs, samples diffuse texture, discards fragments with `tex_color.a < 0.5`. Shadow pass in backend binds each entry's diffuse texture before draw call (both opaque and transparent loops). Shadows of cutout objects (leaves, fences) now have correct holes instead of solid silhouettes
+19. **Shadow Atlas** — refactored from separate per-light FBO+texture to single shared depth atlas. `shadow_map_t` eliminated (was redundant wrapper around tile index). `shadow_index` and per-light `cast_shadow` bool removed from `light_t` — replaced by `int32_t tile_index` (-1 = no shadow). Dynamic tile array (`malloc`'d from config). Atlas FBO bound once per shadow pass, `glViewport` per tile. Fragment shader samples single `shadow_atlas` sampler, remaps coordinates via per-light `shadow_rect[MAX_LIGHTS]`. Shader defines (`MAX_LIGHTS`, light type enums) injected from C via `sprintf`+`strcat` at shader init. Game API simplified: `light_enable_shadow`/`light_disable_shadow` replace create/destroy/attach pattern
 
 ## Key Files
-- `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent passes), shadow pass, shadow slot assignment, instanced rendering, texture upload/bind, scene+material uniform push, FBO management, alpha blending state management
+- `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent passes), shadow pass (atlas-based, single FBO bind + per-tile viewport), instanced rendering, texture upload/bind, scene+material uniform push (shadow atlas + per-light VP/rect), alpha blending state management
 - `frontend.c` — Engine API (submit_object3d, camera_set_active, fill_screen, shadow_distance), stb_image/math/memory implementations, active camera and VPM caching
-- `shader.c/h` — Shader compilation, builtin location resolution (including shadow_map[4]/light_vp[4]/shadow_index arrays), lit+unlit+shadow shader sources
+- `shader.c/h` — Shader compilation, builtin location resolution (shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS]), lit+unlit+shadow shader sources, dynamic define injection for lit shader
 - `material.c/h` — Material creation with auto shader+texture, property setters
 - `texture.c/h` — Texture loading with type (color/data), default fallbacks, GPU upload via backend, sRGB format selection
-- `light.c/h` — Light table, game-facing light API, shadow map attachment, shadow_index field
-- `shadow.c/h` — Shadow map creation/destruction, light VP calculation (frustum-fitted orthographic for directional, perspective for spot)
+- `light.c/h` — Light table, game-facing light API, `light_enable_shadow`/`light_disable_shadow` (tile allocation), `tile_index` per light
+- `shadow.c/h` — Shadow atlas init/shutdown (struct + tiles + GPU resources via backend), tile management (find free, set occupied), shadow_map_update (VP calculation on tile), shadow_atlas_get
 - `camera.c` — View/projection matrices, frustum planes, visibility testing, frustum corners
 - `camera.h` — Internal camera header: struct definition, frustum corners, visibility, matrix getters
 - `batch.c/h` — Per-frame batch registry (opaque: instanced entries grouped by mesh+material; transparent: individual entries sorted back-to-front by distance²), arena-backed transforms and uv_rects
 - `object.c/h` — Object transform, mesh/material pointers, AABB computation, uv_rect with pixel-to-UV conversion
 - `mesh.c/h` — Mesh creation, local AABB from vertex data
-- `cubit.c` — Main loop
-- `cubit_types.h` — Types, forward declarations, enums (including TextureTypes)
-- `cubit.h` — Public game API (camera creation/movement/zoom, object submission, materials with opacity, lights, shadows, ambient, shadow distance, atlas uv_rect, texture creation with type)
+- `cubit.c` — Main loop, shadow_atlas_init/shutdown calls
+- `cubit_types.h` — Types, forward declarations, enums (including TextureTypes), app_config_t with shadow atlas config
+- `cubit.h` — Public game API (camera creation/movement/zoom, object submission, materials with opacity, lights with enable/disable shadow, ambient, shadow distance, atlas uv_rect, texture creation with type)
 - `input.c/h` — Frame-based input system
 - `stb_math3d.h` / `stb_memory.h` / `stb_image.h` — Math, arena allocator, image loading
-- `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadow maps, texture atlas with per-object sub-regions, leaf cutout shadow test
+- `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadows via light_enable_shadow, texture atlas with per-object sub-regions
 
-## Future Roadmap
-- **Cascaded Shadow Maps**: split camera frustum into 2–4 distance slices, each with its own shadow map — high resolution near camera, lower resolution far away. Solves shadow distance/quality tradeoff
-- **Shadow mapping extensions**: point light shadows (cubemap, 6-face depth pass)
-- **Skeletal animation**: bone index/weight buffers (locations 4–5 reserved), bone matrix array
-- **2D pipeline**: separate path for sprites, orthographic, layer ordering, sprite atlas batching
+## Next Stages — Road to Game-Ready
+
+### Stage 19 — Shadow Atlas + Cascaded Shadow Maps (CSM)
+Refactor the shadow system from separate textures to a single depth atlas, then build CSM on top. Two phases: first convert existing shadows to atlas (no visual change), then add cascade support.
+
+#### Design Decisions Made
+- **Shadow Atlas**: all shadow maps share a single depth texture (atlas) and single FBO. Each light writes to a tile region via `glViewport`. Fragment shader samples from the atlas using normalized tile coordinates (`shadow_rect`). Eliminates the old 4-slot limit — number of shadow-casting lights limited only by atlas capacity
+- **`shadow_map_t` eliminated**: was FBO+texture+VP, became just a tile index, then removed entirely. Shadows are now a property of the light, not a separate resource. API becomes `light_enable_shadow(index)` / `light_disable_shadow(index)` — the engine assigns/releases tiles internally
+- **Configuration via `app_config_t`**: game developer sets `shadow_atlas_size` and `shadow_tile_size` in the config struct (same pattern as width/height/fps). Defaults: 8192 atlas, 2048 tile = 16 tiles. Engine validates and clamps
+- **Dynamic tile array**: `shadow_atlas_t.tiles` is `malloc`'d based on actual config, not a fixed-size array. Tile count = `(atlas_size/tile_size)²`
+- **Shader defines injected from C**: `MAX_LIGHTS`, `LIGHT_OFF/DIRECTIONAL/POINT/SPOT` values are `sprintf`'d into a header and prepended to the lit fragment shader source via `strcat`. Keeps C enums and GLSL defines in sync. Only the lit shader uses this — unlit and shadow shaders keep their own `#version` and use regular `shader_create`
+- **Uniform arrays sized by `MAX_LIGHTS`**: `light_vp[MAX_LIGHTS]` and `shadow_rect[MAX_LIGHTS]` in shader and `builtin_locations_t`. No separate `MAX_SHADOW_MAPS` — active shadows per frame can never exceed active lights
+
+#### Implementation Plan (Pezzi A–G) ✅ ALL DONE
+
+**Pezzo A — Shader define injection** ✅ DONE
+- `default_fs_src` lost `#version` and hardcoded `#define`s
+- `shader_init` builds header with `sprintf` using C values, concatenates with `strcat`, passes to `shader_create`
+- `shader_create` unchanged — external/custom shaders unaffected
+- Unlit and shadow shaders unchanged. Buffer increased to 8192 for larger fragment shader
+
+**Pezzo B — Data structures** ✅ DONE
+- `shadow.h`: `shadow_tile_t` (x, y, size, rect, vp, occupied), `shadow_atlas_t` (fbo, texture_id, atlas_size, tile_size, tile_count, *tiles), defaults defined
+- `shadow_map_t` struct eliminated entirely — was redundant wrapper around tile index
+- `light.h`: removed `shadow_map_t*`, `cast_shadow` bool, `shadow_index` — replaced with single `int32_t tile_index` (default -1)
+- `cubit_types.h`: removed `shadow_map_t` forward declaration, `app_config_t` has shadow config
+- `cubit.h`: removed `shadow_map_create`, `shadow_map_destroy`, `light_set_shadow_map`. Added `light_enable_shadow`, `light_disable_shadow`
+
+**Pezzo C — Atlas lifecycle in shadow.c** ✅ DONE
+- `shadow_atlas_init`: mallocs atlas and tiles, computes tile grid positions (x, y) and normalized rects via nested loop, calls `backend_shadow_atlas_new` for GPU resources
+- `shadow_get_index_available_tile`: linear scan for first unoccupied tile
+- `shadow_set_tile_occupied`: sets occupied flag on tile
+- `light_enable_shadow` / `light_disable_shadow` in `light.c`: find/release tiles, set tile_index on light
+- `shadow_map_update`: new signature `(light_t*, vec3* corners)`, reads tile_index from light, writes VP to tile via `*vp` pointer dereference
+
+**Pezzo D — GPU resources in backend.c** ✅ DONE
+- `backend_shadow_atlas_new`: creates single FBO + single large depth texture, stores static pointer to atlas
+- `backend_shadow_atlas_destroy`: cleanup FBO + texture
+- `shadow_pass` rewritten: bind atlas FBO once, clear once, per shadow-casting light set `glViewport` to tile region, render scene with tile's VP. Restore FBO/viewport once at end
+- `push_scene_data` / `push_transparent_scene_data`: bind shadow atlas texture on unit 2, push per-light VP and rect from tiles, zero rect for lights without shadow
+- Old `backend_shadow_map_new` / `backend_shadow_map_destroy` removed
+
+**Pezzo E — Fragment shader update** ✅ DONE
+- `shadow_index` removed from GLSL `Light` struct
+- `calculate_shadow(int i)`: projects via `light_vp[i]`, remaps proj.xy into tile region using `shadow_rect[i]`, samples `shadow_atlas`
+- `pcf_shadow`: no longer takes sampler parameter, uses `shadow_atlas` directly
+- Shadow check: `shadow_rect[i].z > 0.0` replaces old `shadow_index >= 0`
+
+**Pezzo F — builtin_locations update in shader.c** ✅ DONE
+- `shadow_index` removed from `light_uniforms_t`
+- `resolve_builtin_locations`: single `shadow_atlas` sampler, `light_vp[i]` and `shadow_rect[i]` resolved in `MAX_LIGHTS` loop. Old `shadow_map[MAX_SHADOW_MAPS]` loop removed
+
+**Pezzo G — Public API cleanup** ✅ DONE
+- `game.c`: uses `light_enable_shadow(sun)` / `light_enable_shadow(spot_light)` — no more create/attach/destroy pattern
+- `cubit.c`: calls `shadow_atlas_init` after `renderer_init`, `shadow_atlas_shutdown` before `renderer_shutdown`
+
+#### After Atlas: CSM Implementation
+Once atlas works, CSM is straightforward — assign N tiles to one directional light instead of 1:
+- Frustum splitting (practical split scheme) with configurable distances
+- Per-cascade frustum corners → per-cascade tile VP (reuses existing AABB fitting)
+- Fragment shader selects cascade by view-space depth, samples correct tile
+- Cascade blend zone for smooth transitions
+- Debug visualization (color overlay per cascade)
+
+### Stage 20 — AABB Collision System
+Build a collision detection and response system on top of the existing AABB infrastructure. The mesh already computes a local AABB at creation, and `object3d_t` already maintains a dirty-flagged world AABB — the data is there, it just needs to be queried.
+- **Collision registry**: objects opt-in via `object3d_set_collidable(obj, true)`. Engine maintains a flat list of collidable objects (no spatial partitioning yet — sufficient for <1000 active colliders)
+- **Query API**: `collision_test(object3d_t* a, object3d_t* b)` → bool, `collision_test_all(object3d_t* obj)` → returns list of colliding objects, `raycast(vec3 origin, vec3 direction, float max_distance)` → hit result (object pointer, hit point, distance)
+- **Response helpers**: `collision_resolve_slide(obj, overlap)` pushes object out of penetration along the smallest overlap axis — enough for basic "don't walk through walls" behavior
+- **Trigger zones**: flag on collider (`is_trigger`), triggers report overlap but don't block movement — useful for pickups, damage zones, area transitions
+- **Game callback**: `register_collision_callback(collision_func)` so the game can react to hits without polling
+
+### Stage 21 — Text Rendering (Bitmap Font)
+Render text on screen using a bitmap font atlas. Reuses the existing texture atlas and instanced rendering systems — each glyph is a textured quad with a uv_rect pointing to its character in the atlas.
+- **Font atlas**: single PNG with fixed-size character grid (ASCII 32–126), loaded via existing `texture_create()`. Engine ships a default font atlas; game can provide custom ones
+- **Text API**: `text_draw(const char* str, float x, float y, float size, color_t color)` — screen-space coordinates (pixels from top-left). `text_draw_world(str, vec3 pos, ...)` for in-world floating text (billboarded toward camera)
+- **Orthographic overlay pass**: new fourth pass after transparent pass, renders all 2D elements (text, UI) with a simple orthographic projection matching window dimensions. Depth test off, blending on
+- **Batching**: all glyphs sharing the same font atlas batch into one draw call via the existing instanced pipeline — a 100-character string is one draw call, not 100
+- **Alignment**: left/center/right horizontal alignment, computed from string width (glyph count × glyph advance)
+
+### Stage 22 — 2D Sprite & UI Layer
+Extend the orthographic overlay from Stage 21 into a general-purpose 2D system for HUD elements, menus, and sprite-based gameplay.
+- **Sprite API**: `sprite_t` with position, size, rotation, color tint, uv_rect (atlas sub-region), layer (z-order). `sprite_draw(sprite_t*)` submits to the 2D pass
+- **Layer sorting**: sprites sorted by layer integer, then by submission order within same layer. Transparent by default (alpha blending always on in 2D pass)
+- **UI primitives**: filled rectangles, bordered rectangles, progress bars — all built from textured quads with a 1×1 white texture (same trick as 3D fallback). No full UI framework, just enough building blocks for health bars, score displays, simple menus
+- **Screen-space input mapping**: `ui_rect_contains(x, y, w, h, mouse_x, mouse_y)` helper so the game can detect mouse clicks on UI elements using the existing input system
+- **Resolution independence**: UI coordinates expressed in virtual units, scaled to actual window size. `ui_set_virtual_resolution(width, height)` called once at init
+
+### Stage 23 — Audio System
+Integrate a lightweight audio library for sound effects and background music. Minimal API surface — the goal is "play sounds" not "build a DAW."
+- **Backend**: miniaudio (single-header, cross-platform, no dependencies — matches the stb philosophy already used for image/math/memory)
+- **Sound API**: `sound_t* sound_load(const char* filename)` (WAV and OGG), `sound_play(sound_t*)`, `sound_play_looped(sound_t*)`, `sound_stop(sound_t*)`, `sound_destroy(sound_t*)`
+- **Volume control**: per-sound `sound_set_volume(sound_t*, float)` and global `audio_master_volume(float)`
+- **Positional audio** (optional stretch): `sound_play_at(sound_t*, vec3 position)` with distance attenuation relative to active camera position — nice for 3D games, skippable for 2D
+- **Music**: separate `music_play(const char* filename)` path for streaming long tracks without loading entirely into memory
+
+### Stage 24 — Model Loading (OBJ)
+Stop hardcoding vertex arrays in game.c. Load standard 3D model files at runtime so artists can produce content with Blender, MagicaVoxel, or any modeling tool.
+- **OBJ parser**: handle v/vn/vt/f lines, triangulate quads, compute tangents for normal mapping compatibility. OBJ chosen for simplicity — it's a text format, no external dependencies needed
+- **MTL support** (basic): parse material name, diffuse color, diffuse texture path — auto-create `material_t` and `texture_t` per material group
+- **API**: `model_t* model_load(const char* obj_path)` → returns a struct containing one or more mesh+material pairs. `model_get_mesh(model_t*, uint32_t index)`, `model_get_material(model_t*, uint32_t index)`, `model_get_count(model_t*)`
+- **Vertex deduplication**: OBJ indexes position/normal/UV independently, OpenGL needs unified vertices — build a hash map during loading to avoid duplicate vertices
+- **Future extension point**: glTF support later for skeletal animation data (bones, weights, keyframes). OBJ gets us loading geometry now without a massive parser
+
+### Stage 25 — Scene & Object Management
+Provide structure for managing many game objects without the game developer tracking raw pointers in global arrays.
+- **Object registry**: engine-owned flat array of `object3d_t*`, automatic registration on `object3d_new()`, removal on `object3d_destroy()`. Provides `object3d_find_by_tag(const char* tag)` and iteration
+- **Tags and naming**: `object3d_set_tag(obj, "enemy")`, `object3d_set_name(obj, "goblin_03")` — simple strings for identification, no complex ECS
+- **Parent-child hierarchy**: `object3d_set_parent(child, parent)` — child transform is relative to parent. Engine computes world transform by walking up the chain (cached, dirty-flagged). Enables grouped movement (a sword follows the player, wheels follow the car)
+- **Object enable/disable**: `object3d_set_active(obj, bool)` — inactive objects skip rendering, collision, and update. Cheaper than destroy/recreate for object pooling
+- **Scene clear**: `scene_clear()` destroys all registered objects — useful for level transitions
+- **Fixed update integration**: `object3d_set_update(obj, update_func)` optional per-object callback invoked during `application_fixed_update`. Not mandatory — game can still manage updates manually
+
+### Stage 26 — Skeletal Animation
+Bring characters to life. Uses the bone index/weight attribute slots already reserved at locations 4 and 5.
+- **Bone data on mesh**: `mesh_create()` extended to accept bone index (ivec4) and bone weight (vec4) arrays — up to 4 bones per vertex. Backward compatible: NULL bone arrays simply skip the VBOs (existing behavior)
+- **Skeleton**: `skeleton_t` owns a tree of `bone_t` (name, parent index, inverse bind matrix). Created from model data (glTF or custom binary format)
+- **Animation clips**: `animation_t` contains keyframes (position, rotation, scale per bone per timestamp). `animation_play(skeleton, clip, loop)`, `animation_stop(skeleton)`, `animation_blend(skeleton, clip_a, clip_b, factor)` for transitions
+- **Bone matrix upload**: final bone matrices (current_pose × inverse_bind) pushed as a uniform array (max 64 bones). Vertex shader: `skinned_pos = bone_matrices[idx.x] * pos * weight.x + bone_matrices[idx.y] * pos * weight.y + ...`
+- **glTF loader**: extend Stage 24's model loader to parse glTF binary (`.glb`) — geometry + skeleton + animation clips in one file. OBJ remains supported for static meshes
+
+### Stage 27 — Cross-Platform Memory
+Replace POSIX-only `mmap`/`munmap` in `stb_memory.h` with a platform abstraction so Cubit compiles on Windows.
+- **Platform layer**: `#ifdef _WIN32` → `VirtualAlloc`/`VirtualFree`, else → `mmap`/`munmap`. Same API surface (`arena_create`, `arena_alloc`, `arena_reset`, `arena_destroy`), different backing implementation
+- **Build system**: add a minimal CMakeLists.txt or Makefile with platform detection. Currently implicit "just compile all .c files" — needs formalization for cross-compilation
+- **GLFW already cross-platform**: the windowing/input layer (assumed GLFW from the callback signatures) works on Windows/macOS/Linux unchanged
+- **Future**: macOS Metal backend, Vulkan backend — but OpenGL 3.3+ works everywhere for now
+
+## Stretch Goals (Post Game-Ready)
+- **Point light shadows**: cubemap depth pass (6 faces per light), shadow_index extended to cubemap samplers
+- **Particle system**: emitter-based, GPU-instanced quads, configurable lifetime/velocity/color curves — smoke, fire, sparks, dust
+- **Post-processing stack**: bloom, SSAO, tone mapping via fullscreen quad passes with FBO ping-pong
+- **Spatial partitioning**: octree or grid for collision broadphase — needed when collidable object count exceeds ~1000
+- **Networking**: UDP client/server for multiplayer — way down the line, but worth noting as a direction

@@ -40,9 +40,6 @@ static int32_t sun;
 static int32_t point_light;
 static int32_t spot_light;
 
-// Shadow map
-static shadow_map_t* shadow_map;
-static shadow_map_t* shadow_map_spot;
 
 // 24 unique vertices (4 per face)
 static float cube_positions[] = {
@@ -463,10 +460,9 @@ void application_init(void) {
 	light_set_direction(sun, (vec3){-1.0f, -1.0f, -0.5f});
 	light_set_color(sun, (color_t){1.0f, 0.95f, 0.85f, 1.0f});
 	light_set_intensity(sun, 0.8f);
-	shadow_map = shadow_map_create();
-	light_set_shadow_map(sun, shadow_map);
+    light_enable_shadow(sun);
 
-	// Point light — cool blue hovering above center
+    // Point light — cool blue hovering above center
 	point_light = light_create(LIGHT_POINT);
 	light_set_position(point_light, (vec3){0.0f, 3.0f, 0.0f});
 	light_set_color(point_light, (color_t){0.4f, 0.6f, 1.0f, 1.0f});
@@ -478,8 +474,7 @@ void application_init(void) {
 	light_set_direction(spot_light, (vec3){0.0f, -1.0f, -0.5f});
 	light_set_color(spot_light, CUBIT_RED);
 	light_set_intensity(spot_light, 0.5);
-    shadow_map_spot = shadow_map_create();
-    light_set_shadow_map(spot_light, shadow_map_spot);
+    light_enable_shadow(spot_light);
 }
 
 void application_fixed_update(double dt) {
@@ -538,8 +533,6 @@ void application_shutdown(void) {
 	texture_destroy(cube_texture);
 	texture_destroy(cube_normal_texture);
 
-	shadow_map_destroy(shadow_map);
-	shadow_map_destroy(shadow_map_spot);
 	material_destroy(mat_white);
 	material_destroy(mat_red);
 	material_destroy(mat_blue);

@@ -39,6 +39,7 @@ static vec3 active_frustum_corners[8]; // The active camea frustum corners
 static float ambient_factor; // Per scene ambient factor defaulted 0.1f
 static double dt;
 static double accumulator;
+static shadow_atlas_t* shadow_atlas;
 
 extern void input_process_keyboard(int32_t key, int32_t scancode, int32_t action, int32_t mods);
 extern void input_process_mouse_position(double x_pos, double y_pos);
@@ -216,33 +217,29 @@ void renderer_end_frame(void) {
 static void push_transparent_scene_data(transparent_entry_t *e) {
     builtin_locations_t* loc = &e->material->shader->locations;
 
+    // Step 1: set texture sampler slots
     if (loc->diffuse_texture >= 0)
         glUniform1i(loc->diffuse_texture, 0);
     if (loc->normal_texture >= 0)
         glUniform1i(loc->normal_texture, 1);
 
+    // Step 2: ambient factor
     if (loc->ambient_factor >= 0)
         glUniform1f(loc->ambient_factor, ambient_factor);
 
+    // Step 3: early exit if no lights
     uint32_t count = light_get_count();
     if (count == 0) return;
 
     light_t* light = light_get_table();
 
+    // Step 4: scene-wide light uniforms
     if (loc->light_count >= 0)
         glUniform1i(loc->light_count, count);
     if (loc->camera_position >= 0)
         glUniform3fv(loc->camera_position, 1, (float*)&camera_position);
 
-    int32_t shadow_slot = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        if (light[i].shadow_map != NULL && shadow_slot < MAX_SHADOW_MAPS) {
-            light[i].shadow_index = shadow_slot++;
-        } else {
-            light[i].shadow_index = -1;
-        }
-    }
-
+    // Step 5: per-light properties
     for (uint32_t i = 0; i < count; i++) {
         if (loc->light[i].light_type >= 0)
             glUniform1i(loc->light[i].light_type, light[i].type);
@@ -264,23 +261,34 @@ static void push_transparent_scene_data(transparent_entry_t *e) {
             glUniform1f(loc->light[i].cone_inner_cutoff, light[i].cone.inner_cutoff);
         if (loc->light[i].cone_outer_cutoff >= 0)
             glUniform1f(loc->light[i].cone_outer_cutoff, light[i].cone.outer_cutoff);
-        if (loc->light[i].shadow_index >= 0)
-            glUniform1i(loc->light[i].shadow_index, light[i].shadow_index);
     }
 
+    // Step 6: bind the shadow atlas texture once on unit 2
+    if (loc->shadow_atlas >= 0 && shadow_atlas) {
+        glUniform1i(loc->shadow_atlas, 2);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, shadow_atlas->texture_id);
+    }
+
+    // Step 7: per-light shadow data — VP and tile rect
+    // Lights with a tile get their VP and rect pushed.
+    // Lights without a tile get a zero rect so the shader skips them.
     for (uint32_t i = 0; i < count; i++) {
-        if (light[i].shadow_index >= 0 && light[i].shadow_map) {
-            int32_t idx = light[i].shadow_index;
-            if (loc->shadow_map[idx] >= 0) {
-                glUniform1i(loc->shadow_map[idx], 2 + idx);
-                glActiveTexture(GL_TEXTURE2 + idx);
-                glBindTexture(GL_TEXTURE_2D, light[i].shadow_map->id);
+        if (light[i].tile_index >= 0) {
+            shadow_tile_t *tile = &shadow_atlas->tiles[light[i].tile_index];
+            if (loc->light_vp[i] >= 0)
+                glUniformMatrix4fv(loc->light_vp[i], 1, GL_FALSE, (float*)&tile->vp.m);
+            if (loc->shadow_rect[i] >= 0)
+                glUniform4fv(loc->shadow_rect[i], 1, (float*)&tile->rect);
+        } else {
+            if (loc->shadow_rect[i] >= 0) {
+                vec4 zero = {0.0f, 0.0f, 0.0f, 0.0f};
+                glUniform4fv(loc->shadow_rect[i], 1, (float*)&zero);
             }
-            if (loc->light_vp[idx] >= 0)
-                glUniformMatrix4fv(loc->light_vp[idx], 1, GL_FALSE, (float*)&light[i].shadow_map->vp.m);
         }
     }
 }
+
 
 static void push_transparent_shader_data(transparent_entry_t *e) {
     builtin_locations_t* loc = &e->material->shader->locations;
@@ -331,78 +339,78 @@ static void push_shader_data(batch_registry_entry_t *e) {
 }
 
 static void push_scene_data(batch_registry_entry_t *e) {
-	// get location
-	builtin_locations_t* loc = &e->material->shader->locations;
+    builtin_locations_t* loc = &e->material->shader->locations;
 
-	// Texture
-	if (loc->diffuse_texture >= 0)
-		glUniform1i(loc->diffuse_texture, 0);
-	if (loc->normal_texture >= 0)
-		glUniform1i(loc->normal_texture, 1);
+    // Step 1: set texture sampler slots
+    if (loc->diffuse_texture >= 0)
+        glUniform1i(loc->diffuse_texture, 0);
+    if (loc->normal_texture >= 0)
+        glUniform1i(loc->normal_texture, 1);
 
-	// Ambient factor
-	if (loc->ambient_factor >= 0)
-		glUniform1f(loc->ambient_factor, ambient_factor);
+    // Step 2: ambient factor
+    if (loc->ambient_factor >= 0)
+        glUniform1f(loc->ambient_factor, ambient_factor);
 
-	uint32_t count = light_get_count();
-	if (count == 0) return;
+    // Step 3: early exit if no lights
+    uint32_t count = light_get_count();
+    if (count == 0) return;
 
-	light_t* light = light_get_table();
+    light_t* light = light_get_table();
 
-	if (loc->light_count >= 0)
-		glUniform1i(loc->light_count, count);
-	if (loc->camera_position >= 0)
-		glUniform3fv(loc->camera_position, 1, (float*)&camera_position);
+    // Step 4: scene-wide light uniforms
+    if (loc->light_count >= 0)
+        glUniform1i(loc->light_count, count);
+    if (loc->camera_position >= 0)
+        glUniform3fv(loc->camera_position, 1, (float*)&camera_position);
 
-	// Assign shadow slots BEFORE pushing light data
-	int32_t shadow_slot = 0;
-	for (uint32_t i = 0; i < count; i++) {
-		if (light[i].shadow_map != NULL && shadow_slot < MAX_SHADOW_MAPS) {
-			light[i].shadow_index = shadow_slot++;
-		} else {
-			light[i].shadow_index = -1;
-		}
-	}
+    // Step 5: per-light properties
+    for (uint32_t i = 0; i < count; i++) {
+        if (loc->light[i].light_type >= 0)
+            glUniform1i(loc->light[i].light_type, light[i].type);
+        if (loc->light[i].light_color >= 0)
+            glUniform3fv(loc->light[i].light_color, 1, (float*)&light[i].color);
+        if (loc->light[i].light_intensity >= 0)
+            glUniform1f(loc->light[i].light_intensity, light[i].intensity);
+        if (loc->light[i].light_direction >= 0)
+            glUniform3fv(loc->light[i].light_direction, 1, (float*)&light[i].direction);
+        if (loc->light[i].light_position >= 0)
+            glUniform3fv(loc->light[i].light_position, 1, (float*)&light[i].position);
+        if (loc->light[i].constant_attenuation >= 0)
+            glUniform1f(loc->light[i].constant_attenuation, light[i].attenuation.constant);
+        if (loc->light[i].linear_attenuation >= 0)
+            glUniform1f(loc->light[i].linear_attenuation, light[i].attenuation.linear);
+        if (loc->light[i].quadratic_attenuation >= 0)
+            glUniform1f(loc->light[i].quadratic_attenuation, light[i].attenuation.quadratic);
+        if (loc->light[i].cone_inner_cutoff >= 0)
+            glUniform1f(loc->light[i].cone_inner_cutoff, light[i].cone.inner_cutoff);
+        if (loc->light[i].cone_outer_cutoff >= 0)
+            glUniform1f(loc->light[i].cone_outer_cutoff, light[i].cone.outer_cutoff);
+    }
 
-	// Now push light data (shadow_index is already correct)
-	for (uint32_t i = 0; i < count; i++) {
-		if (loc->light[i].light_type >= 0)
-			glUniform1i(loc->light[i].light_type, light[i].type);
-		if (loc->light[i].light_color >= 0)
-			glUniform3fv(loc->light[i].light_color, 1, (float*)&light[i].color );
-		if (loc->light[i].light_intensity >= 0)
-			glUniform1f(loc->light[i].light_intensity, light[i].intensity);
-		if (loc->light[i].light_direction >= 0)
-			glUniform3fv(loc->light[i].light_direction, 1, (float*)&light[i].direction);
-		if (loc->light[i].light_position >= 0)
-			glUniform3fv(loc->light[i].light_position, 1, (float*)&light[i].position);
-		if (loc->light[i].constant_attenuation >= 0)
-			glUniform1f(loc->light[i].constant_attenuation, light[i].attenuation.constant);
-		if (loc->light[i].linear_attenuation >= 0)
-			glUniform1f(loc->light[i].linear_attenuation, light[i].attenuation.linear);
-		if (loc->light[i].quadratic_attenuation >= 0)
-			glUniform1f(loc->light[i].quadratic_attenuation, light[i].attenuation.quadratic);
-		if (loc->light[i].cone_inner_cutoff >= 0)
-			glUniform1f(loc->light[i].cone_inner_cutoff, light[i].cone.inner_cutoff);
-		if (loc->light[i].cone_outer_cutoff >= 0)
-			glUniform1f(loc->light[i].cone_outer_cutoff, light[i].cone.outer_cutoff);
-		if (loc->light[i].shadow_index >= 0)
-			glUniform1i(loc->light[i].shadow_index, light[i].shadow_index);
-	}
+    // Step 6: bind the shadow atlas texture once on unit 2
+    if (loc->shadow_atlas >= 0 && shadow_atlas) {
+        glUniform1i(loc->shadow_atlas, 2);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, shadow_atlas->texture_id);
+    }
 
-	// Bind shadow map textures and push VP matrices
-	for (uint32_t i = 0; i < count; i++) {
-		if (light[i].shadow_index >= 0 && light[i].shadow_map) {
-			int32_t idx = light[i].shadow_index;
-			if (loc->shadow_map[idx] >= 0) {
-				glUniform1i(loc->shadow_map[idx], 2 + idx);
-				glActiveTexture(GL_TEXTURE2 + idx);
-				glBindTexture(GL_TEXTURE_2D, light[i].shadow_map->id);
-			}
-			if (loc->light_vp[idx] >= 0)
-				glUniformMatrix4fv(loc->light_vp[idx], 1, GL_FALSE, (float*)&light[i].shadow_map->vp.m);
-		}
-	}
+    // Step 7: per-light shadow data — VP and tile rect
+    // Lights with a tile get their VP and rect pushed.
+    // Lights without a tile get a zero rect so the shader skips them.
+    for (uint32_t i = 0; i < count; i++) {
+        if (light[i].tile_index >= 0) {
+            shadow_tile_t *tile = &shadow_atlas->tiles[light[i].tile_index];
+            if (loc->light_vp[i] >= 0)
+                glUniformMatrix4fv(loc->light_vp[i], 1, GL_FALSE, (float*)&tile->vp.m);
+            if (loc->shadow_rect[i] >= 0)
+                glUniform4fv(loc->shadow_rect[i], 1, (float*)&tile->rect);
+        } else {
+            if (loc->shadow_rect[i] >= 0) {
+                vec4 zero = {0.0f, 0.0f, 0.0f, 0.0f};
+                glUniform4fv(loc->shadow_rect[i], 1, (float*)&zero);
+            }
+        }
+    }
 }
 
 /* TRANSPARENT PASS */
@@ -450,96 +458,86 @@ static void transparent_pass(void) {
     glDisable(GL_BLEND);
 }
 
-/* SHADOW PASS */
+/* SHADOW PASS — renders depth into the shadow atlas.
+ * Binds the atlas FBO once, clears once, then for each
+ * shadow-casting light sets glViewport to its tile region
+ * and renders the scene with that light's VP */
 static void shadow_pass(void) {
-	light_t* light = light_get_table();
-	for (uint32_t i = 0; i < light_get_count(); i++) {
-		shadow_map_t *sm = light[i].shadow_map;
-		if (sm) {
-			shadow_map_update(sm, &light[i], active_frustum_corners);
-			glBindFramebuffer(GL_FRAMEBUFFER, sm->fbo);
-			glViewport(0, 0, sm->size, sm->size);
-			glClear(GL_DEPTH_BUFFER_BIT);
-			shader_t *shader = shader_get_shadow();
-			glUseProgram(shader->program_id);
+    // Step 1: bind atlas FBO and clear depth once for all lights
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_atlas->fbo);
+    glClear(GL_DEPTH_BUFFER_BIT);
 
-            // Pass the VP
-			if (shader->locations.vp >= 0)
-				glUniformMatrix4fv(shader->locations.vp, 1, GL_FALSE, (float*)&sm->vp.m);
+    // Step 2: setup shadow shader (same for all lights)
+    shader_t *shader = shader_get_shadow();
+    glUseProgram(shader->program_id);
+    if (shader->locations.diffuse_texture >= 0)
+        glUniform1i(shader->locations.diffuse_texture, 0);
 
-            // Pass the diffuse texture
-            if (shader->locations.diffuse_texture >=0)
-                glUniform1i(shader->locations.diffuse_texture, 0);
+    // Step 3: for each light with a tile, render the scene into its tile
+    light_t* light = light_get_table();
+    uint32_t count = light_get_count();
 
+    for (uint32_t i = 0; i < count; i++) {
+        if (light[i].tile_index < 0) continue;
 
-            // Shadow cast for opaque objects
-			for (uint32_t j = 0; j < batch_size(); j++) {
-				batch_registry_entry_t e = batch_get_entry(j);
-                // TRANSFORM
-				glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
-				glBufferData(
-					GL_ARRAY_BUFFER,
-					sizeof(mat4) * e.count,
-					e.transforms,
-					GL_DYNAMIC_DRAW
-				);
-                //UV RECT
-                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
-				glBufferData(
-					GL_ARRAY_BUFFER,
-					sizeof(vec4) * e.count,
-					e.uv_rect,
-					GL_DYNAMIC_DRAW
-				);
+        // Update the light's VP and store it on the tile
+        shadow_map_update(&light[i], active_frustum_corners);
 
-				glBindBuffer(GL_ARRAY_BUFFER, 0);
-				glBindVertexArray(e.mesh->vao);
+        // Set viewport to this light's tile region in the atlas
+        shadow_tile_t *tile = &shadow_atlas->tiles[light[i].tile_index];
+        glViewport(tile->x, tile->y, tile->size, tile->size);
 
-                // binda texture
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+        // Pass this light's VP to the shadow shader
+        if (shader->locations.vp >= 0)
+            glUniformMatrix4fv(shader->locations.vp, 1, GL_FALSE, (float*)&tile->vp.m);
 
-				glDrawElementsInstanced(
-					GL_TRIANGLES,
-					e.mesh->index_count,
-					GL_UNSIGNED_INT,
-					0,
-					e.count
-				);
-			}
+        // Render opaque objects
+        for (uint32_t j = 0; j < batch_size(); j++) {
+            batch_registry_entry_t e = batch_get_entry(j);
 
-            // Shadow cast for transparent objects
-            for (uint32_t i = 0; i < batch_transparent_size(); i++) {
-                transparent_entry_t e = batch_get_transparent_entry(i);
-                // Skipp shadow
-                if (!e.material->cast_shadow) continue;
+            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(mat4) * e.count,
+                         e.transforms, GL_DYNAMIC_DRAW);
 
-                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(mat4), &e.transform, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(vec4) * e.count,
+                         e.uv_rect, GL_DYNAMIC_DRAW);
 
-                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(vec4), &e.uv_rect, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(e.mesh->vao);
 
-                glBindBuffer(GL_ARRAY_BUFFER, 0);
-                glBindVertexArray(e.mesh->vao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
 
-                // binda texture
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+            glDrawElementsInstanced(GL_TRIANGLES, e.mesh->index_count,
+                                    GL_UNSIGNED_INT, 0, e.count);
+        }
 
-                glDrawElementsInstanced(
-                    GL_TRIANGLES,
-                    e.mesh->index_count,
-                    GL_UNSIGNED_INT,
-                    0,
-                    1
-                );
-            }
+        // Render transparent objects that cast shadows
+        for (uint32_t j = 0; j < batch_transparent_size(); j++) {
+            transparent_entry_t e = batch_get_transparent_entry(j);
+            if (!e.material->cast_shadow) continue;
 
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			glViewport(0, 0, state.gfx->width, state.gfx->height);
-		}
-	}
+            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(mat4), &e.transform, GL_DYNAMIC_DRAW);
+
+            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(vec4), &e.uv_rect, GL_DYNAMIC_DRAW);
+
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(e.mesh->vao);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+
+            glDrawElementsInstanced(GL_TRIANGLES, e.mesh->index_count,
+                                    GL_UNSIGNED_INT, 0, 1);
+        }
+    }
+
+    // Step 4: restore default framebuffer and viewport
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, state.gfx->width, state.gfx->height);
 }
 
 
@@ -846,13 +844,13 @@ float backend_ambient_factor_get(void) {
 	return ambient_factor;
 }
 
-void backend_shadow_map_new(shadow_map_t* sm) {
-	// Step 1: create texture
-	glGenTextures(1, &sm->id);
-	glBindTexture(GL_TEXTURE_2D, sm->id);
+void backend_shadow_atlas_new(shadow_atlas_t* sa) {
+    // Stpe 1: create the atlas texture
+	glGenTextures(1, &sa->texture_id);
+	glBindTexture(GL_TEXTURE_2D, sa->texture_id);
 
 	// Step 2: fill texture
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, sm->size, sm->size, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, sa->atlas_size, sa->atlas_size, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
 
 	// Step 3: setup texture's filters
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -863,11 +861,11 @@ void backend_shadow_map_new(shadow_map_t* sm) {
     glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border_color);
 
 	// Step 4: create FBO
-	glGenFramebuffers(1, &sm->fbo);
-	glBindFramebuffer(GL_FRAMEBUFFER, sm->fbo);
+	glGenFramebuffers(1, &sa->fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, sa->fbo);
 
 	// Step 5: attach the texture to the framebuffer
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sm->id, 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sa->texture_id, 0);
 
 	// Step 6: tell OpenGL there is no color only depth
 	glDrawBuffer(GL_NONE);
@@ -876,11 +874,14 @@ void backend_shadow_map_new(shadow_map_t* sm) {
 	// Step 7: unbind
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glBindTexture(GL_TEXTURE_2D, 0);
+
+    // Step 8: create a local pointer to the atlas
+    shadow_atlas = sa;
 }
 
-void backend_shadow_map_destroy(shadow_map_t *sm) {
-	glDeleteTextures(1, &sm->id);
-	glDeleteFramebuffers(1, &sm->fbo);
+void backend_shadow_atlas_destroy(shadow_atlas_t* sa) {
+	glDeleteTextures(1, &sa->texture_id);
+	glDeleteFramebuffers(1, &sa->fbo);
 }
 
 void backend_set_camera_position(vec3 pos) {
