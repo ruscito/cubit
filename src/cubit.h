@@ -120,5 +120,6 @@ float ambient_factor_get(void);
 // Shadow map
 void shadow_distance_set(float sd);
 float shadow_distance_get(void);
+void shadow_set_cascade_lambda(float l);
 
 #endif

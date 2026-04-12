@@ -73,5 +73,7 @@ void backend_shadow_atlas_new(shadow_atlas_t* sa);
 void backend_shadow_atlas_destroy(shadow_atlas_t* sa);
 void backend_set_camera_position(vec3 pos);
 void backend_set_active_frustum_corners(vec3* corners);
+void backend_set_cascade_corners(uint32_t cascade, vec3* corners);
+void backend_set_view_matrix(mat4 v);
 
 #endif

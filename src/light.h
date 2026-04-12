@@ -30,8 +30,9 @@ struct light_t {
 		float inner_cutoff;
 		float outer_cutoff;
 	} cone;
-    int32_t tile_index;         // -1 no shadow cast oterwise the tile
-                                // in the shadow atlas
+    int32_t cascade_tiles[MAX_CASCADES];// -1 no tile assigned
+    int32_t cascade_count;              // 1 for spot/point light MAX_CASCADES
+                                        // for directional lights CSM
 };
 
 void light_init(void);

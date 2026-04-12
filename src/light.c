@@ -23,7 +23,8 @@ static void reset_light(light_t* l) {
 	l->attenuation.quadratic = DEFAULT_ATT_QUADRATIC;
 	l->cone.inner_cutoff = DEFAULT_CONE_INNER * DEG2RAD;
 	l->cone.outer_cutoff = DEFAULT_CONE_OUTER * DEG2RAD;
-    l->tile_index = -1;
+    l->cascade_count = 0;
+    for (uint32_t i = 0; i < MAX_CASCADES; i++) l->cascade_tiles[i] = -1;
 }
 
 
@@ -105,16 +106,38 @@ void light_set_cone(int32_t index, float inner_degrees, float outer_degrees) {
  * shadow tiles atlas, find the first available assigne the
  * position to the light and mark the tile as occupied */
 void light_enable_shadow(int32_t index) {
-	if (index < 0 || index >= (int32_t)light_table.count) return;
-    int32_t pos = shadow_get_index_available_tile();
-    if (pos<0) return;
-	light_table.lights[index].tile_index = pos;
-    shadow_set_tile_occupied(pos, true);
+    if (index < 0 || index >= (int32_t)light_table.count) return;
+    light_t *l = &light_table.lights[index];
+
+    int32_t count = (l->type == LIGHT_DIRECTIONAL) ? MAX_CASCADES : 1;
+
+    for (int32_t i = 0; i < count; i++) {
+        int32_t pos = shadow_get_index_available_tile();
+        if (pos < 0) {
+            // Not enough tiles — release what we already grabbed
+            for (int32_t j = 0; j < i; j++) {
+                shadow_set_tile_occupied(l->cascade_tiles[j], false);
+                l->cascade_tiles[j] = -1;
+            }
+            l->cascade_count = 0;
+            fprintf(stderr, "light_enable_shadow: not enough atlas tiles\n");
+            return;
+        }
+        l->cascade_tiles[i] = pos;
+        shadow_set_tile_occupied(pos, true);
+    }
+    l->cascade_count = count;
 }
 
 void light_disable_shadow(int32_t index) {
-	if (index < 0 || index >= (int32_t)light_table.count) return;
-    shadow_set_tile_occupied(light_table.lights[index].tile_index, false);
-	light_table.lights[index].tile_index = -1;
-}
+    if (index < 0 || index >= (int32_t)light_table.count) return;
+    light_t *l = &light_table.lights[index];
 
+    for (int32_t i = 0; i < l->cascade_count; i++) {
+        if (l->cascade_tiles[i] >= 0) {
+            shadow_set_tile_occupied(l->cascade_tiles[i], false);
+            l->cascade_tiles[i] = -1;
+        }
+    }
+    l->cascade_count = 0;
+}

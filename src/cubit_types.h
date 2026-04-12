@@ -35,6 +35,7 @@
 
 #define CAMERA_MODE_TARGET 0	// Orbits/looks at a target point
 #define CAMERA_MODE_FREE   1	// Free roation using yaw/pitch
+#define MAX_CASCADES       3
 
 typedef enum {
     COLOR_TEXTURE,

@@ -3,7 +3,7 @@
 ## Goal
 Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-poly and voxel-style games.
 
-## Current Architecture (After Stage 18)
+## Current Architecture (After Stage 19)
 
 ### Rendering Pipeline
 - **Three-pass rendering**: shadow pass writes depth from each shadow-casting light's perspective, opaque pass renders solid objects with per-light shadow lookup, transparent pass renders translucent objects back-to-front with alpha blending
@@ -17,8 +17,8 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 ### Camera System
 - **Public API** (`cubit.h`): creation (free/target mode), movement, rotation, zoom, viewport update, active camera set/get
 - **Internal API** (`camera.h`): frustum corners extraction, visibility testing, matrix getters, struct definition
-- **Active camera pattern**: game calls `camera_set_active()` once per frame before submitting objects. Frontend caches VPM, updates camera position in backend, and extracts frustum corners for shadow mapping. `submit_object3d()` takes no camera parameter — uses active camera implicitly
-- Frustum corners accept a far override parameter for shadow distance clamping
+- **Active camera pattern**: game calls `camera_set_active()` once per frame before submitting objects. Frontend caches VPM, updates camera position in backend, computes cascade split distances, generates per-cascade frustum corners and passes them to backend, and forwards view matrix for CSM depth calculation. `submit_object3d()` takes no camera parameter — uses active camera implicitly
+- `camera_get_frustum_corners(camera_t*, vec3*, near_dist, far_dist)` accepts explicit near/far distances — used both for full frustum (spot lights) and per-cascade slices (directional CSM)
 
 ### Mesh System
 - `mesh_t`: VAO, separate VBOs per attribute (position/normal/UV/tangent), two instance VBOs (transform + uv_rect), EBO, vertex count, index count, local AABB
@@ -28,7 +28,7 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 
 ### Shader System
 - `shader_t`: compiled program + `builtin_locations_t` (resolved once at creation) + uniform table (max 16, for custom shaders)
-- `builtin_locations_t` caches locations for: vp, surface_color, specular_color, shininess, emissive_color, opacity, diffuse_texture sampler, normal_texture sampler, shadow_map[4] samplers, light_vp[4] matrices, light array (16 slots × 11 fields each, including shadow_index), light_count, camera_position, ambient_factor
+- `builtin_locations_t` caches locations for: vp, surface_color, specular_color, shininess, emissive_color, opacity, diffuse_texture sampler, normal_texture sampler, shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS], cascade_vp[MAX_CASCADES], cascade_rect[MAX_CASCADES], cascade_splits[MAX_CASCADES], cascade_count, view_matrix, light array (16 slots × 10 fields each), light_count, camera_position, ambient_factor
 - Three built-in shaders: **lit** (default, Blinn-Phong + multi-shadow), **unlit** (flat surface_color), **shadow** (depth-only with alpha cutout — samples diffuse texture via UV + uv_rect remapping, discards fragments with `tex_color.a < 0.5`)
 - Draw loop reads shader through material chain: `batch_entry → material → shader → locations`
 
@@ -47,7 +47,7 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - 1×1 white fallback texture: always bound when no texture assigned. Shader always samples and multiplies — `surface_color × white = surface_color`, no branches needed
 - 1×1 flat normal fallback texture (128, 128, 255): encodes tangent-space (0, 0, 1) — "straight out." TBN × (0,0,1) = vertex normal, no perturbation
 - Mipmaps generated for all textures; only used with LINEAR min filter (`GL_LINEAR_MIPMAP_LINEAR`)
-- Texture unit allocation: 0=diffuse, 1=normal, 2–5=shadow maps; sampler uniforms set per shader switch
+- Texture unit allocation: 0=diffuse, 1=normal, 2=shadow atlas; sampler uniforms set per shader switch
 - Channel count (3 or 4) determines external format (`GL_RGB` vs `GL_RGBA`); internal format determined by channel count × texture type
 
 ### Texture Atlas System
@@ -64,28 +64,28 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 ### Lighting System
 - Blinn-Phong forward rendering: ambient + diffuse + specular per light per fragment
 - Unified `light_t` struct with type tag: directional, point, spot (all fields present, type controls which matter)
-- Light table: 16 slots, compact (shift-on-delete), persistent (not per-frame), `shadow_map_t*` optional pointer per light (NULL default), `shadow_index` (-1 default, assigned per-frame by backend)
+- Light table: 16 slots, compact (shift-on-delete), persistent (not per-frame), `int32_t cascade_tiles[MAX_CASCADES]` per light (all default -1), `int32_t cascade_count` (0 = no shadow, 1 = spot/point, MAX_CASCADES = directional CSM)
 - Shader loops active lights, branches on type for direction/attenuation/spot calculations
 - Zero-light fallback: flat `base_color` output (backward compatible)
 - Ambient factor: scene-level uniform (default 0.1), game-controllable via `ambient_factor_set()`/`ambient_factor_get()`
 - Camera position forwarded via simple static overwrite in `backend.c`
 
-### Shadow Mapping System (Atlas-Based)
+### Shadow Mapping System (Atlas-Based + CSM)
 - **Shadow atlas**: all shadow-casting lights share a single depth texture and single FBO. Each light writes to a tile region via `glViewport`. Configurable via `app_config_t`: `shadow_atlas_size` (default 8192) and `shadow_tile_size` (default 2048). Tile count = `(atlas_size/tile_size)²`, dynamically allocated
 - **`shadow_tile_t`**: pixel position (x, y) for `glViewport`, tile size, normalized `vec4 rect` for shader sampling, `mat4 vp` (light view-projection), `bool occupied`
-- **`shadow_atlas_t`**: single FBO, single depth texture, atlas/tile sizes, tile count, `malloc`'d tile array. Created by `shadow_atlas_init`, GPU resources via `backend_shadow_atlas_new`
-- **Shadows as light property**: `light_t` has `int32_t tile_index` (default -1). No separate `shadow_map_t` — eliminated as redundant. `light_enable_shadow(index)` finds free tile, marks occupied, stores tile_index. `light_disable_shadow(index)` releases tile, resets to -1
-- **No shadow slot assignment**: old `shadow_index` mapping eliminated. Shader arrays `light_vp[MAX_LIGHTS]` and `shadow_rect[MAX_LIGHTS]` indexed directly by light index. Single `shadow_atlas` sampler replaces old `shadow_map[4]` array
-- **Shadow pass**: `shadow_pass()` binds atlas FBO once, clears once, then per shadow-casting light (`tile_index >= 0`): calls `shadow_map_update` to compute VP on tile, sets `glViewport` to tile region, renders scene with tile's VP. Restores default FBO/viewport once at end
-- **Fragment shader shadow sampling**: `calculate_shadow(i)` projects fragment via `light_vp[i]`, remaps projected UV into tile region using `shadow_rect[i]`, samples from `shadow_atlas`. Lights without shadow have `shadow_rect` = zero vec4, shader skips them via `shadow_rect[i].z > 0.0` check
-- **Directional light frustum-fitting**: 8 corners of the active camera's frustum (clamped by shadow distance) transformed into light space, AABB bounds determine orthographic projection. Light positioned at frustum center offset along inverted direction. Z bounds negated/swapped for OpenGL convention
-- **Shadow distance**: configurable scene-level value (default 50), controls how far from the camera directional shadows extend. `camera_get_frustum_corners()` receives far override as `min(camera.far, shadow_distance)`. Game-facing getter/setter: `shadow_distance_set()`/`shadow_distance_get()`
+- **`shadow_atlas_t`**: single FBO, single depth texture, atlas/tile sizes, tile count, `malloc`'d tile array, `float lambda` (practical split blend, default 0.5), `float split_distances[MAX_CASCADES + 1]` (recomputed each frame)
+- **Shadows as light property**: `light_t` has `int32_t cascade_tiles[MAX_CASCADES]` (default -1) and `int32_t cascade_count`. No separate shadow type. `light_enable_shadow(index)` auto-detects light type: allocates 1 tile for spot/point (`cascade_count = 1`), MAX_CASCADES tiles for directional (`cascade_count = MAX_CASCADES`). Rollback on insufficient tiles. `light_disable_shadow(index)` releases all tiles
+- **Cascaded Shadow Maps (CSM)**: directional lights use multiple atlas tiles, one per frustum cascade. Practical split scheme (`lambda * log + (1-lambda) * linear`) divides the camera frustum from near to shadow_distance into `cascade_count` slices. Frontend computes split distances and per-cascade frustum corners each frame in `camera_set_active`, passes them to backend. Shadow pass loops cascades per directional light: each cascade gets its own frustum corners → AABB fitting → orthographic VP → tile render
+- **CSM fragment shader**: dedicated `calculate_cascade_shadow()` computes view-space depth via `view_matrix`, selects cascade by comparing against `cascade_splits[]`, projects and samples from the correct cascade tile. Directional lights use this path; spot/point use the original `calculate_shadow(i)` path via `shadow_rect[i]`
+- **CSM uniforms**: `cascade_vp[MAX_CASCADES]`, `cascade_rect[MAX_CASCADES]`, `cascade_splits[MAX_CASCADES]`, `cascade_count`, `view_matrix`. Injected alongside `MAX_CASCADES` define. `push_scene_data` finds first directional light with cascades, uploads its data, zeros its `shadow_rect[i]` so the old path skips it. One CSM light supported
+- **Texel snapping**: VP matrix translation (`m[12]`, `m[13]`) rounded to nearest texel boundary after AABB fitting, prevents shadow swimming on camera movement
+- **Shadow pass**: bind atlas FBO once, clear once. Per light: loop `cascade_count` times, compute VP per cascade (directional uses cascade corners, spot uses full frustum), set `glViewport` to tile region, render scene. Spot/point with `cascade_count = 1` loops once — same behavior as before
 - **Spot light projection**: perspective (FOV = 2 × outer_cutoff, aspect 1.0), fixed position and direction — no frustum-fitting needed
 - **Border color**: atlas depth texture uses `GL_CLAMP_TO_BORDER` with border color (1,1,1,1), so fragments outside coverage read as fully lit
 - PCF (Percentage Closer Filtering): 5×5 kernel for soft shadow edges, samples from atlas coordinates
 - Shadow bias (0.005) to prevent shadow acne
 - Ambient light unaffected by shadows (only diffuse+specular multiplied by shadow factor)
-- Game API: `light_enable_shadow(index)`, `light_disable_shadow(index)`, `shadow_distance_set()`/`shadow_distance_get()`
+- Game API: `light_enable_shadow(index)`, `light_disable_shadow(index)`, `shadow_distance_set()`/`shadow_distance_get()` — CSM is automatic for directional lights, transparent to game developer
 
 ### Init Order
 `shader_init()` → `texture_init()` → `light_init()` → `material_init()`. Then `shadow_atlas_init()` (called from `cubit.c` after `renderer_init`). Shutdown reverses.
@@ -110,91 +110,29 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 16. **Gamma Correction / sRGB Pipeline** — `TextureTypes` enum (COLOR_TEXTURE/DATA_TEXTURE) on `texture_t`, color textures as `GL_SRGB8`/`GL_SRGB8_ALPHA8`, data textures as `GL_RGB8`/`GL_RGBA8`, `GL_FRAMEBUFFER_SRGB` enabled at init, lighting now computed in linear space
 17. **Transparency Support** — `float opacity` on material (default 1.0), dual batch registry (opaque instanced + transparent individual), transparent pass with alpha blending (`SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`), depth read yes/write no, back-to-front sorting by distance² from camera, alpha cutout via `discard` when `tex_color.a * opacity < 0.5`, fragment output alpha = `tex_color.a * opacity`, `bool cast_shadow` on material (default true) allows game dev to disable shadow casting for transparent objects
 18. **Alpha Cutout in Shadow Pass** — shadow shader upgraded from empty depth-only to UV-aware: accepts UV (location 2) + uv_rect (location 10), remaps UVs, samples diffuse texture, discards fragments with `tex_color.a < 0.5`. Shadow pass in backend binds each entry's diffuse texture before draw call (both opaque and transparent loops). Shadows of cutout objects (leaves, fences) now have correct holes instead of solid silhouettes
-19. **Shadow Atlas** — refactored from separate per-light FBO+texture to single shared depth atlas. `shadow_map_t` eliminated (was redundant wrapper around tile index). `shadow_index` and per-light `cast_shadow` bool removed from `light_t` — replaced by `int32_t tile_index` (-1 = no shadow). Dynamic tile array (`malloc`'d from config). Atlas FBO bound once per shadow pass, `glViewport` per tile. Fragment shader samples single `shadow_atlas` sampler, remaps coordinates via per-light `shadow_rect[MAX_LIGHTS]`. Shader defines (`MAX_LIGHTS`, light type enums) injected from C via `sprintf`+`strcat` at shader init. Game API simplified: `light_enable_shadow`/`light_disable_shadow` replace create/destroy/attach pattern
+19. **Shadow Atlas + CSM** — refactored from separate per-light FBO+texture to single shared depth atlas. `shadow_map_t` eliminated — replaced by `int32_t cascade_tiles[MAX_CASCADES]` + `cascade_count` on `light_t`. Dynamic tile array (`malloc`'d from config). Atlas FBO bound once per shadow pass, `glViewport` per tile. Fragment shader samples single `shadow_atlas` sampler, remaps coordinates via per-light `shadow_rect[MAX_LIGHTS]`. Shader defines (`MAX_LIGHTS`, `MAX_CASCADES`, light type enums) injected from C. Game API simplified: `light_enable_shadow`/`light_disable_shadow` auto-detect light type — spot gets 1 tile, directional gets MAX_CASCADES tiles. Cascaded Shadow Maps: practical split scheme (λ=0.5) divides frustum into slices, each rendered into its own atlas tile. Frontend computes per-cascade frustum corners each frame. Dedicated GLSL path (`calculate_cascade_shadow`) selects cascade by view-space depth via `view_matrix` uniform. Texel snapping on VP translation prevents shadow swimming. `MAX_CASCADES` defined in `cubit_types.h`. CSM transparent to game developer
 
 ## Key Files
-- `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent passes), shadow pass (atlas-based, single FBO bind + per-tile viewport), instanced rendering, texture upload/bind, scene+material uniform push (shadow atlas + per-light VP/rect), alpha blending state management
-- `frontend.c` — Engine API (submit_object3d, camera_set_active, fill_screen, shadow_distance), stb_image/math/memory implementations, active camera and VPM caching
-- `shader.c/h` — Shader compilation, builtin location resolution (shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS]), lit+unlit+shadow shader sources, dynamic define injection for lit shader
+- `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent passes), shadow pass (atlas-based, single FBO bind + per-cascade viewport loop), instanced rendering, texture upload/bind, scene+material uniform push (shadow atlas + per-light VP/rect + cascade VP/rect/splits), alpha blending state management
+- `frontend.c` — Engine API (submit_object3d, camera_set_active with cascade corner computation, fill_screen, shadow_distance), stb_image/math/memory implementations, active camera and VPM caching
+- `shader.c/h` — Shader compilation, builtin location resolution (shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS], cascade_vp/rect/splits[MAX_CASCADES], cascade_count, view_matrix), lit+unlit+shadow shader sources, dynamic define injection for lit shader
 - `material.c/h` — Material creation with auto shader+texture, property setters
 - `texture.c/h` — Texture loading with type (color/data), default fallbacks, GPU upload via backend, sRGB format selection
-- `light.c/h` — Light table, game-facing light API, `light_enable_shadow`/`light_disable_shadow` (tile allocation), `tile_index` per light
-- `shadow.c/h` — Shadow atlas init/shutdown (struct + tiles + GPU resources via backend), tile management (find free, set occupied), shadow_map_update (VP calculation on tile), shadow_atlas_get
+- `light.c/h` — Light table, game-facing light API, `light_enable_shadow`/`light_disable_shadow` (auto-detect type, allocate 1 or MAX_CASCADES tiles), `cascade_tiles[MAX_CASCADES]` + `cascade_count` per light
+- `shadow.c/h` — Shadow atlas init/shutdown (struct + tiles + GPU resources via backend), tile management (find free, set occupied), shadow_map_update (VP calculation on tile, texel snapping), shadow_compute_split_distances (practical split scheme), shadow_atlas_get
 - `camera.c` — View/projection matrices, frustum planes, visibility testing, frustum corners
 - `camera.h` — Internal camera header: struct definition, frustum corners, visibility, matrix getters
 - `batch.c/h` — Per-frame batch registry (opaque: instanced entries grouped by mesh+material; transparent: individual entries sorted back-to-front by distance²), arena-backed transforms and uv_rects
 - `object.c/h` — Object transform, mesh/material pointers, AABB computation, uv_rect with pixel-to-UV conversion
 - `mesh.c/h` — Mesh creation, local AABB from vertex data
 - `cubit.c` — Main loop, shadow_atlas_init/shutdown calls
-- `cubit_types.h` — Types, forward declarations, enums (including TextureTypes), app_config_t with shadow atlas config
+- `cubit_types.h` — Types, forward declarations, enums (including TextureTypes), MAX_CASCADES, app_config_t with shadow atlas config
 - `cubit.h` — Public game API (camera creation/movement/zoom, object submission, materials with opacity, lights with enable/disable shadow, ambient, shadow distance, atlas uv_rect, texture creation with type)
 - `input.c/h` — Frame-based input system
 - `stb_math3d.h` / `stb_memory.h` / `stb_image.h` — Math, arena allocator, image loading
 - `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadows via light_enable_shadow, texture atlas with per-object sub-regions
 
 ## Next Stages — Road to Game-Ready
-
-### Stage 19 — Shadow Atlas + Cascaded Shadow Maps (CSM)
-Refactor the shadow system from separate textures to a single depth atlas, then build CSM on top. Two phases: first convert existing shadows to atlas (no visual change), then add cascade support.
-
-#### Design Decisions Made
-- **Shadow Atlas**: all shadow maps share a single depth texture (atlas) and single FBO. Each light writes to a tile region via `glViewport`. Fragment shader samples from the atlas using normalized tile coordinates (`shadow_rect`). Eliminates the old 4-slot limit — number of shadow-casting lights limited only by atlas capacity
-- **`shadow_map_t` eliminated**: was FBO+texture+VP, became just a tile index, then removed entirely. Shadows are now a property of the light, not a separate resource. API becomes `light_enable_shadow(index)` / `light_disable_shadow(index)` — the engine assigns/releases tiles internally
-- **Configuration via `app_config_t`**: game developer sets `shadow_atlas_size` and `shadow_tile_size` in the config struct (same pattern as width/height/fps). Defaults: 8192 atlas, 2048 tile = 16 tiles. Engine validates and clamps
-- **Dynamic tile array**: `shadow_atlas_t.tiles` is `malloc`'d based on actual config, not a fixed-size array. Tile count = `(atlas_size/tile_size)²`
-- **Shader defines injected from C**: `MAX_LIGHTS`, `LIGHT_OFF/DIRECTIONAL/POINT/SPOT` values are `sprintf`'d into a header and prepended to the lit fragment shader source via `strcat`. Keeps C enums and GLSL defines in sync. Only the lit shader uses this — unlit and shadow shaders keep their own `#version` and use regular `shader_create`
-- **Uniform arrays sized by `MAX_LIGHTS`**: `light_vp[MAX_LIGHTS]` and `shadow_rect[MAX_LIGHTS]` in shader and `builtin_locations_t`. No separate `MAX_SHADOW_MAPS` — active shadows per frame can never exceed active lights
-
-#### Implementation Plan (Pezzi A–G) ✅ ALL DONE
-
-**Pezzo A — Shader define injection** ✅ DONE
-- `default_fs_src` lost `#version` and hardcoded `#define`s
-- `shader_init` builds header with `sprintf` using C values, concatenates with `strcat`, passes to `shader_create`
-- `shader_create` unchanged — external/custom shaders unaffected
-- Unlit and shadow shaders unchanged. Buffer increased to 8192 for larger fragment shader
-
-**Pezzo B — Data structures** ✅ DONE
-- `shadow.h`: `shadow_tile_t` (x, y, size, rect, vp, occupied), `shadow_atlas_t` (fbo, texture_id, atlas_size, tile_size, tile_count, *tiles), defaults defined
-- `shadow_map_t` struct eliminated entirely — was redundant wrapper around tile index
-- `light.h`: removed `shadow_map_t*`, `cast_shadow` bool, `shadow_index` — replaced with single `int32_t tile_index` (default -1)
-- `cubit_types.h`: removed `shadow_map_t` forward declaration, `app_config_t` has shadow config
-- `cubit.h`: removed `shadow_map_create`, `shadow_map_destroy`, `light_set_shadow_map`. Added `light_enable_shadow`, `light_disable_shadow`
-
-**Pezzo C — Atlas lifecycle in shadow.c** ✅ DONE
-- `shadow_atlas_init`: mallocs atlas and tiles, computes tile grid positions (x, y) and normalized rects via nested loop, calls `backend_shadow_atlas_new` for GPU resources
-- `shadow_get_index_available_tile`: linear scan for first unoccupied tile
-- `shadow_set_tile_occupied`: sets occupied flag on tile
-- `light_enable_shadow` / `light_disable_shadow` in `light.c`: find/release tiles, set tile_index on light
-- `shadow_map_update`: new signature `(light_t*, vec3* corners)`, reads tile_index from light, writes VP to tile via `*vp` pointer dereference
-
-**Pezzo D — GPU resources in backend.c** ✅ DONE
-- `backend_shadow_atlas_new`: creates single FBO + single large depth texture, stores static pointer to atlas
-- `backend_shadow_atlas_destroy`: cleanup FBO + texture
-- `shadow_pass` rewritten: bind atlas FBO once, clear once, per shadow-casting light set `glViewport` to tile region, render scene with tile's VP. Restore FBO/viewport once at end
-- `push_scene_data` / `push_transparent_scene_data`: bind shadow atlas texture on unit 2, push per-light VP and rect from tiles, zero rect for lights without shadow
-- Old `backend_shadow_map_new` / `backend_shadow_map_destroy` removed
-
-**Pezzo E — Fragment shader update** ✅ DONE
-- `shadow_index` removed from GLSL `Light` struct
-- `calculate_shadow(int i)`: projects via `light_vp[i]`, remaps proj.xy into tile region using `shadow_rect[i]`, samples `shadow_atlas`
-- `pcf_shadow`: no longer takes sampler parameter, uses `shadow_atlas` directly
-- Shadow check: `shadow_rect[i].z > 0.0` replaces old `shadow_index >= 0`
-
-**Pezzo F — builtin_locations update in shader.c** ✅ DONE
-- `shadow_index` removed from `light_uniforms_t`
-- `resolve_builtin_locations`: single `shadow_atlas` sampler, `light_vp[i]` and `shadow_rect[i]` resolved in `MAX_LIGHTS` loop. Old `shadow_map[MAX_SHADOW_MAPS]` loop removed
-
-**Pezzo G — Public API cleanup** ✅ DONE
-- `game.c`: uses `light_enable_shadow(sun)` / `light_enable_shadow(spot_light)` — no more create/attach/destroy pattern
-- `cubit.c`: calls `shadow_atlas_init` after `renderer_init`, `shadow_atlas_shutdown` before `renderer_shutdown`
-
-#### After Atlas: CSM Implementation
-Once atlas works, CSM is straightforward — assign N tiles to one directional light instead of 1:
-- Frustum splitting (practical split scheme) with configurable distances
-- Per-cascade frustum corners → per-cascade tile VP (reuses existing AABB fitting)
-- Fragment shader selects cascade by view-space depth, samples correct tile
-- Cascade blend zone for smooth transitions
-- Debug visualization (color overlay per cascade)
 
 ### Stage 20 — AABB Collision System
 Build a collision detection and response system on top of the existing AABB infrastructure. The mesh already computes a local AABB at creation, and `object3d_t` already maintains a dirty-flagged world AABB — the data is there, it just needs to be queried.

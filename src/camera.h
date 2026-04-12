@@ -61,8 +61,7 @@ vec3 camera_get_direction(camera_t* c);
 int32_t camera_get_mode(camera_t* c);
 float camera_get_zoom_factor(camera_t* c);
 bool camera_is_object3d_visible(camera_t* c, object3d_t* o);
-void camera_get_frustum_corners(camera_t* c, vec3* corners, float shadow_distance);
-
+void camera_get_frustum_corners(camera_t* c, vec3* corners, float near_dist, float far_dist);
 
 
 #endif

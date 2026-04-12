@@ -63,6 +63,11 @@ static const char default_fs_src[] = "\n"
     "uniform sampler2D shadow_atlas;\n"
     "uniform mat4 light_vp[MAX_LIGHTS];\n"
     "uniform vec4 shadow_rect[MAX_LIGHTS];\n"
+    "uniform mat4 cascade_vp[MAX_CASCADES];\n"
+    "uniform vec4 cascade_rect[MAX_CASCADES];\n"
+    "uniform float cascade_splits[MAX_CASCADES];\n"
+    "uniform int cascade_count;\n"
+    "uniform mat4 view_matrix;\n"
     "\n"
     "in vec3 frag_position;\n"
     "in vec3 frag_normal;\n"
@@ -95,6 +100,29 @@ static const char default_fs_src[] = "\n"
     "\n"
     "   // Remap proj.xy from full [0,1] into this light's tile region\n"
     "   vec4 rect = shadow_rect[i];\n"
+    "   proj.x = rect.x + proj.x * (rect.z - rect.x);\n"
+    "   proj.y = rect.y + proj.y * (rect.w - rect.y);\n"
+    "\n"
+    "   return pcf_shadow(proj);\n"
+    "}\n"
+    "float calculate_cascade_shadow() {\n"
+    "   float depth = -(view_matrix * vec4(frag_position, 1.0)).z;\n"
+    "\n"
+    "   int cascade = cascade_count - 1;\n"
+    "   for (int c = 0; c < cascade_count; c++) {\n"
+    "       if (depth < cascade_splits[c]) {\n"
+    "           cascade = c;\n"
+    "           break;\n"
+    "       }\n"
+    "   }\n"
+    "\n"
+    "   vec4 light_space_pos = cascade_vp[cascade] * vec4(frag_position, 1.0);\n"
+    "   vec3 proj = light_space_pos.xyz / light_space_pos.w;\n"
+    "   proj = proj * 0.5 + 0.5;\n"
+    "\n"
+    "   if (proj.z > 1.0) return 0.0;\n"
+    "\n"
+    "   vec4 rect = cascade_rect[cascade];\n"
     "   proj.x = rect.x + proj.x * (rect.z - rect.x);\n"
     "   proj.y = rect.y + proj.y * (rect.w - rect.y);\n"
     "\n"
@@ -153,10 +181,12 @@ static const char default_fs_src[] = "\n"
     "       vec3 diffuse = diff * light_contrib * base_color;\n"
     "       vec3 specular = spec * light_contrib * specular_color;\n"
     "\n"
-    "       // shadow_rect.z > 0 means this light has a tile in the atlas\n"
     "       float shadow_factor = 1.0;\n"
-    "       if (shadow_rect[i].z > 0.0)\n"
+    "       if (light[i].light_type == LIGHT_DIRECTIONAL && cascade_count > 0) {\n"
+    "           shadow_factor = 1.0 - calculate_cascade_shadow();\n"
+    "       } else if (shadow_rect[i].z > 0.0) {\n"
     "           shadow_factor = 1.0 - calculate_shadow(i);\n"
+    "       }\n"
     "\n"
     "       result += ambient + (diffuse + specular) * attenuation * spot_factor * shadow_factor;\n"
     "   }\n"
@@ -275,6 +305,18 @@ static void resolve_builtin_locations(shader_t* s) {
 	    s->locations.shadow_rect[i] = glGetUniformLocation(s->program_id, shadow_rect);
 	    s->locations.light_vp[i] = glGetUniformLocation(s->program_id, light_vp);
     }
+    // CSM cascade locations
+    for (uint32_t i = 0; i < MAX_CASCADES; i++) {
+        char buf[32];
+        sprintf(buf, "cascade_vp[%d]", i);
+        s->locations.cascade_vp[i] = glGetUniformLocation(s->program_id, buf);
+        sprintf(buf, "cascade_rect[%d]", i);
+        s->locations.cascade_rect[i] = glGetUniformLocation(s->program_id, buf);
+        sprintf(buf, "cascade_splits[%d]", i);
+        s->locations.cascade_splits[i] = glGetUniformLocation(s->program_id, buf);
+    }
+    s->locations.cascade_count = glGetUniformLocation(s->program_id, "cascade_count");
+    s->locations.view_matrix = glGetUniformLocation(s->program_id, "view_matrix");
 }
 
 
@@ -399,11 +441,13 @@ void shader_init(void) {
 	sprintf(fs_src,
 		"#version 330 core\n"
 		"#define MAX_LIGHTS %d\n"
+        "#define MAX_CASCADES %d\n"
 		"#define LIGHT_OFF %d\n"
 		"#define LIGHT_DIRECTIONAL %d\n"
 		"#define LIGHT_POINT %d\n"
 		"#define LIGHT_SPOT %d\n",
 		MAX_LIGHTS,
+        MAX_CASCADES,
 		LIGHT_OFF,
 		LIGHT_DIRECTIONAL,
 		LIGHT_POINT,

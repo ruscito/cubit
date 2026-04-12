@@ -57,6 +57,12 @@ struct builtin_locations_t {
     int32_t shadow_rect[MAX_LIGHTS];    // MAX_LIGHT shadow tile per frame:
                                         // though shadow_atlas can contains up MAX_SHADOW_TILES
                                         // ony MAX_LIGHTS can be active per frame
+    // CSM cascade uniforms
+    int32_t cascade_vp[MAX_CASCADES];
+    int32_t cascade_rect[MAX_CASCADES];
+    int32_t cascade_splits[MAX_CASCADES];
+    int32_t cascade_count;
+    int32_t view_matrix;
 };
 
 

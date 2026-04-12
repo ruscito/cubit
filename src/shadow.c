@@ -14,11 +14,10 @@ static shadow_atlas_t* shadow_atlas;
 
 
 /* This function update the shadow tile associated to the light */
-void shadow_map_update(light_t* light, vec3 *corners) {
+void shadow_map_update(light_t* light, vec3 *corners, int32_t tile_index) {
     mat4 v, p;
 
     // Get tile index
-    int32_t tile_index = light->tile_index;
     if (tile_index < 0) {
         fprintf(stderr, "shadow_map_update called with invalid shadow tile_index\n");
         return;
@@ -67,6 +66,22 @@ void shadow_map_update(light_t* light, vec3 *corners) {
             // Get the prospective
             p = mat4_orthographic(min_x, max_x, min_y, max_y, -max_z, -min_z);
             *vp = mat4_multiply(p, v);
+
+            // TODO: make sure it works
+
+            // Texel snapping: prevent shadow swimming by rounding
+            // the VP translation to the nearest texel boundary
+            float tile_sz = (float)shadow_atlas->tiles[tile_index].size;
+            float half_sz = tile_sz * 0.5f;
+
+            // Where the origin lands in texel coordinates
+            float shadow_x = vp->m[12] * half_sz;
+            float shadow_y = vp->m[13] * half_sz;
+
+            // Remove the sub-texel offset
+            vp->m[12] += (roundf(shadow_x) - shadow_x) / half_sz;
+            vp->m[13] += (roundf(shadow_y) - shadow_y) / half_sz;
+
             break;
 
         case LIGHT_SPOT:;
@@ -153,6 +168,8 @@ void shadow_atlas_init(uint32_t atlas_size, uint32_t tile_size) {
 
     // Now that the shadow atlas structure is defined we can
     // call the backend to generate the resources for the atlas
+    shadow_atlas->cascade_count = DEFAULT_CASCADE_COUNT;
+    shadow_atlas->lambda = DEFAULT_CASCADE_LAMBDA;
     backend_shadow_atlas_new(shadow_atlas);
 }
 
@@ -165,3 +182,25 @@ void shadow_atlas_shutdown(void) {
 shadow_atlas_t* shadow_atlas_get(void) {
     return shadow_atlas;
 }
+
+void shadow_compute_split_distances(float near, float far) {
+    uint32_t n = shadow_atlas->cascade_count;
+    float lambda = shadow_atlas->lambda;
+
+    shadow_atlas->split_distances[0] = near;
+    for (uint32_t i = 1; i < n; i++) {
+        float p = (float)i / (float)n;
+        float log_split = near * powf(far / near, p);
+        float lin_split = near + (far - near) * p;
+        shadow_atlas->split_distances[i] = lambda * log_split + (1.0f - lambda) * lin_split;
+    }
+    shadow_atlas->split_distances[n] = far;
+}
+
+/* λ = 0 → tagli puramente uniformi
+ * λ = 1 → tagli puramente logaritmici
+ * λ = 0.5 → via di mezzo, che in pratica funziona benissimo */
+void shadow_set_cascade_lambda(float l) {
+    shadow_atlas->lambda = l;
+}
+

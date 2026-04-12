@@ -15,6 +15,7 @@
 #include "shader.h"
 #include "object.h"
 #include "mesh.h"
+#include "shadow.h"
 #include "camera.h"
 
 #include <assert.h>
@@ -126,10 +127,28 @@ void camera_set_active(camera_t* c) {
     camera_update(c);
     vec3 p = camera_get_position(c);
     backend_set_camera_position(p);
+    backend_set_view_matrix(camera_get_view_matrix(c));
     batch_set_camera_position(p);
+
+    // Compute cascade split distances for the current frame
+    shadow_compute_split_distances(c->near, shadow_distance);
+
+    // Compute per-cascade frustum corners
+    shadow_atlas_t* atlas = shadow_atlas_get();
+    for (uint32_t i = 0; i < atlas->cascade_count; i++) {
+        vec3 corners[8];
+        camera_get_frustum_corners(c, corners,
+            atlas->split_distances[i],
+            atlas->split_distances[i + 1]);
+        backend_set_cascade_corners(i, corners);
+    }
+
+    // Full frustum corners (used by spot lights — they ignore them
+    // but shadow_map_update still receives a pointer)
     vec3 corners[8];
-    camera_get_frustum_corners(c, corners, shadow_distance);
+    camera_get_frustum_corners(c, corners, c->near, shadow_distance);
     backend_set_active_frustum_corners(corners);
+
     active_mvp = camera_get_view_projection_matrix(c);
 }
 

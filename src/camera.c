@@ -379,18 +379,18 @@ bool camera_is_object3d_visible(camera_t* c, object3d_t* o) {
 /* Get a camera and calculate the 8 corners of the frustum. The 4 near plane
  * coners and the 4 far plane cornes. The 8 corners are in world space
  * coordinates. */
-void camera_get_frustum_corners(camera_t* c, vec3* corners, float shadow_distance) {
+void camera_get_frustum_corners(camera_t* c, vec3* corners, float near_dist, float far_dist) {
     // Calculating half-height and half-width
     // of near and far plane
     float t = tanf(c->fov/2.0f);
-    float n_half_height = t * c->near;
+    float n_half_height = t * near_dist;
     float n_half_width = n_half_height * c->aspect;
-    float f_half_height = t * fmin(c->far, shadow_distance);
+    float f_half_height = t * far_dist;
     float f_half_width = f_half_height * c->aspect;
 
     // Finding the center of the near and far plane
-    vec3 n_center = vec3_add(c->position, vec3_scale(c->direction, c->near));
-    vec3 f_center = vec3_add(c->position, vec3_scale(c->direction, fmin(c->far, shadow_distance)));
+    vec3 n_center = vec3_add(c->position, vec3_scale(c->direction, near_dist));
+    vec3 f_center = vec3_add(c->position, vec3_scale(c->direction, far_dist));
 
     // Building corners
     vec3 right = camera_get_right(c);

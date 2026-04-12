@@ -40,6 +40,8 @@ static float ambient_factor; // Per scene ambient factor defaulted 0.1f
 static double dt;
 static double accumulator;
 static shadow_atlas_t* shadow_atlas;
+static vec3 cascade_corners[MAX_CASCADES][8];
+static mat4 view_matrix;
 
 extern void input_process_keyboard(int32_t key, int32_t scancode, int32_t action, int32_t mods);
 extern void input_process_mouse_position(double x_pos, double y_pos);
@@ -274,8 +276,8 @@ static void push_transparent_scene_data(transparent_entry_t *e) {
     // Lights with a tile get their VP and rect pushed.
     // Lights without a tile get a zero rect so the shader skips them.
     for (uint32_t i = 0; i < count; i++) {
-        if (light[i].tile_index >= 0) {
-            shadow_tile_t *tile = &shadow_atlas->tiles[light[i].tile_index];
+        if (light[i].cascade_tiles[0] >= 0) {
+            shadow_tile_t *tile = &shadow_atlas->tiles[light[i].cascade_tiles[0]];
             if (loc->light_vp[i] >= 0)
                 glUniformMatrix4fv(loc->light_vp[i], 1, GL_FALSE, (float*)&tile->vp.m);
             if (loc->shadow_rect[i] >= 0)
@@ -287,6 +289,41 @@ static void push_transparent_scene_data(transparent_entry_t *e) {
             }
         }
     }
+
+    // Step 8: CSM cascade data
+    // Find the first directional light with cascades and upload its data
+    if (loc->cascade_count >= 0) {
+        int32_t csm_count = 0;
+        shadow_atlas_t *atlas = shadow_atlas_get();
+
+        for (uint32_t i = 0; i < count; i++) {
+            if (light[i].type == LIGHT_DIRECTIONAL && light[i].cascade_count > 1) {
+                csm_count = light[i].cascade_count;
+                for (int32_t c = 0; c < csm_count; c++) {
+                    int32_t tile_idx = light[i].cascade_tiles[c];
+                    if (tile_idx < 0) continue;
+                    shadow_tile_t *tile = &shadow_atlas->tiles[tile_idx];
+                    if (loc->cascade_vp[c] >= 0)
+                        glUniformMatrix4fv(loc->cascade_vp[c], 1, GL_FALSE, (float*)&tile->vp.m);
+                    if (loc->cascade_rect[c] >= 0)
+                        glUniform4fv(loc->cascade_rect[c], 1, (float*)&tile->rect);
+                    if (loc->cascade_splits[c] >= 0)
+                        glUniform1f(loc->cascade_splits[c], atlas->split_distances[c + 1]);
+                }
+                // Zero out shadow_rect[i] so the old path skips this light
+                if (loc->shadow_rect[i] >= 0) {
+                    vec4 zero = {0.0f, 0.0f, 0.0f, 0.0f};
+                    glUniform4fv(loc->shadow_rect[i], 1, (float*)&zero);
+                }
+                break;  // only one CSM light supported
+            }
+        }
+        glUniform1i(loc->cascade_count, csm_count);
+    }
+
+    // View matrix for CSM depth calculation
+    if (loc->view_matrix >= 0)
+        glUniformMatrix4fv(loc->view_matrix, 1, GL_FALSE, (float*)&view_matrix.m);
 }
 
 
@@ -398,8 +435,8 @@ static void push_scene_data(batch_registry_entry_t *e) {
     // Lights with a tile get their VP and rect pushed.
     // Lights without a tile get a zero rect so the shader skips them.
     for (uint32_t i = 0; i < count; i++) {
-        if (light[i].tile_index >= 0) {
-            shadow_tile_t *tile = &shadow_atlas->tiles[light[i].tile_index];
+        if (light[i].cascade_tiles[0] >= 0) {
+            shadow_tile_t *tile = &shadow_atlas->tiles[light[i].cascade_tiles[0]];
             if (loc->light_vp[i] >= 0)
                 glUniformMatrix4fv(loc->light_vp[i], 1, GL_FALSE, (float*)&tile->vp.m);
             if (loc->shadow_rect[i] >= 0)
@@ -411,6 +448,41 @@ static void push_scene_data(batch_registry_entry_t *e) {
             }
         }
     }
+
+    // Step 8: CSM cascade data
+    // Find the first directional light with cascades and upload its data
+    if (loc->cascade_count >= 0) {
+        int32_t csm_count = 0;
+        shadow_atlas_t *atlas = shadow_atlas_get();
+
+        for (uint32_t i = 0; i < count; i++) {
+            if (light[i].type == LIGHT_DIRECTIONAL && light[i].cascade_count > 1) {
+                csm_count = light[i].cascade_count;
+                for (int32_t c = 0; c < csm_count; c++) {
+                    int32_t tile_idx = light[i].cascade_tiles[c];
+                    if (tile_idx < 0) continue;
+                    shadow_tile_t *tile = &shadow_atlas->tiles[tile_idx];
+                    if (loc->cascade_vp[c] >= 0)
+                        glUniformMatrix4fv(loc->cascade_vp[c], 1, GL_FALSE, (float*)&tile->vp.m);
+                    if (loc->cascade_rect[c] >= 0)
+                        glUniform4fv(loc->cascade_rect[c], 1, (float*)&tile->rect);
+                    if (loc->cascade_splits[c] >= 0)
+                        glUniform1f(loc->cascade_splits[c], atlas->split_distances[c + 1]);
+                }
+                // Zero out shadow_rect[i] so the old path skips this light
+                if (loc->shadow_rect[i] >= 0) {
+                    vec4 zero = {0.0f, 0.0f, 0.0f, 0.0f};
+                    glUniform4fv(loc->shadow_rect[i], 1, (float*)&zero);
+                }
+                break;  // only one CSM light supported
+            }
+        }
+        glUniform1i(loc->cascade_count, csm_count);
+    }
+
+    // View matrix for CSM depth calculation
+    if (loc->view_matrix >= 0)
+        glUniformMatrix4fv(loc->view_matrix, 1, GL_FALSE, (float*)&view_matrix.m);
 }
 
 /* TRANSPARENT PASS */
@@ -478,68 +550,75 @@ static void shadow_pass(void) {
     uint32_t count = light_get_count();
 
     for (uint32_t i = 0; i < count; i++) {
-        if (light[i].tile_index < 0) continue;
+        if (light[i].cascade_count == 0) continue;
 
-        // Update the light's VP and store it on the tile
-        shadow_map_update(&light[i], active_frustum_corners);
+        for (int32_t c = 0; c < light[i].cascade_count; c++) {
+            int32_t tile_idx = light[i].cascade_tiles[c];
+            if (tile_idx < 0) continue;
 
-        // Set viewport to this light's tile region in the atlas
-        shadow_tile_t *tile = &shadow_atlas->tiles[light[i].tile_index];
-        glViewport(tile->x, tile->y, tile->size, tile->size);
+            // Directional lights use per-cascade corners,
+            // spot lights ignore corners but we pass full frustum anyway
+            vec3 *corners = (light[i].type == LIGHT_DIRECTIONAL)
+                ? cascade_corners[c]
+                : active_frustum_corners;
 
-        // Pass this light's VP to the shadow shader
-        if (shader->locations.vp >= 0)
-            glUniformMatrix4fv(shader->locations.vp, 1, GL_FALSE, (float*)&tile->vp.m);
+            shadow_map_update(&light[i], corners, tile_idx);
 
-        // Render opaque objects
-        for (uint32_t j = 0; j < batch_size(); j++) {
-            batch_registry_entry_t e = batch_get_entry(j);
+            shadow_tile_t *tile = &shadow_atlas->tiles[tile_idx];
+            glViewport(tile->x, tile->y, tile->size, tile->size);
 
-            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(mat4) * e.count,
-                         e.transforms, GL_DYNAMIC_DRAW);
+            if (shader->locations.vp >= 0)
+                glUniformMatrix4fv(shader->locations.vp, 1, GL_FALSE, (float*)&tile->vp.m);
 
-            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(vec4) * e.count,
-                         e.uv_rect, GL_DYNAMIC_DRAW);
+            // Render opaque objects
+            for (uint32_t j = 0; j < batch_size(); j++) {
+                batch_registry_entry_t e = batch_get_entry(j);
 
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-            glBindVertexArray(e.mesh->vao);
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(mat4) * e.count,
+                             e.transforms, GL_DYNAMIC_DRAW);
 
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vec4) * e.count,
+                             e.uv_rect, GL_DYNAMIC_DRAW);
 
-            glDrawElementsInstanced(GL_TRIANGLES, e.mesh->index_count,
-                                    GL_UNSIGNED_INT, 0, e.count);
-        }
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                glBindVertexArray(e.mesh->vao);
 
-        // Render transparent objects that cast shadows
-        for (uint32_t j = 0; j < batch_transparent_size(); j++) {
-            transparent_entry_t e = batch_get_transparent_entry(j);
-            if (!e.material->cast_shadow) continue;
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
 
-            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(mat4), &e.transform, GL_DYNAMIC_DRAW);
+                glDrawElementsInstanced(GL_TRIANGLES, e.mesh->index_count,
+                                        GL_UNSIGNED_INT, 0, e.count);
+            }
 
-            glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(vec4), &e.uv_rect, GL_DYNAMIC_DRAW);
+            // Render transparent objects that cast shadows
+            for (uint32_t j = 0; j < batch_transparent_size(); j++) {
+                transparent_entry_t e = batch_get_transparent_entry(j);
+                if (!e.material->cast_shadow) continue;
 
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-            glBindVertexArray(e.mesh->vao);
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_transform);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(mat4), &e.transform, GL_DYNAMIC_DRAW);
 
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+                glBindBuffer(GL_ARRAY_BUFFER, e.mesh->instance_vbo_uv_rect);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vec4), &e.uv_rect, GL_DYNAMIC_DRAW);
 
-            glDrawElementsInstanced(GL_TRIANGLES, e.mesh->index_count,
-                                    GL_UNSIGNED_INT, 0, 1);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                glBindVertexArray(e.mesh->vao);
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, e.material->diffuse_texture->id);
+
+                glDrawElementsInstanced(GL_TRIANGLES, e.mesh->index_count,
+                                        GL_UNSIGNED_INT, 0, 1);
+            }
         }
     }
 
-    // Step 4: restore default framebuffer and viewport
+    // Restore default framebuffer and viewport
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, state.gfx->width, state.gfx->height);
 }
-
 
 void renderer_draw(void) {
 	glClearColor(0.4, 0.45, 0.5, 1.0); // Default background
@@ -888,7 +967,14 @@ void backend_set_camera_position(vec3 pos) {
 	camera_position = pos;
 }
 
+void backend_set_view_matrix(mat4 v) {
+    view_matrix = v;
+}
+
 void backend_set_active_frustum_corners(vec3* corners) {
     memcpy((void *)active_frustum_corners, (const void*)corners, 8 * sizeof(vec3));
 }
 
+void backend_set_cascade_corners(uint32_t cascade, vec3* corners) {
+    memcpy(cascade_corners[cascade], corners, 8 * sizeof(vec3));
+}
