@@ -475,6 +475,14 @@ void application_init(void) {
 	light_set_color(spot_light, CUBIT_RED);
 	light_set_intensity(spot_light, 0.5);
     light_enable_shadow(spot_light);
+
+    // Collision set
+    collision_3d_add_collidable(center_cube);
+    collision_3d_add_collidable(left_cube);
+    collision_3d_add_collidable(right_cube);
+    collision_3d_add_collidable(back_cube);
+    collision_3d_add_collidable(front_cube);
+    collision_3d_add_collidable(floor_obj);
 }
 
 void application_fixed_update(double dt) {
@@ -485,11 +493,47 @@ void application_update(double dt) {
 	fill_screen((color_t){0.08f, 0.08f, 0.12f, 1.0f});
 
 	// Slow rotation on cubes
-	object3d_rotate_y(center_cube, 30.0f * dt);
+	//object3d_rotate_y(center_cube, 30.0f * dt);
 	object3d_rotate_y(left_cube, -20.0f * dt);
 	object3d_rotate_y(right_cube, 15.0f * dt);
 	object3d_rotate_y(back_cube, -25.0f * dt);
 	object3d_rotate_y(front_cube, 20.0f * dt);
+
+
+    vec3 move = {0, 0, 0};
+    float speed = 3.0f * dt;
+
+    if (is_key_down(KEY_I)) move.z -= speed;
+    if (is_key_down(KEY_K)) move.z += speed;
+    if (is_key_down(KEY_J)) move.x -= speed;
+    if (is_key_down(KEY_L)) move.x += speed;
+
+    if (move.x != 0.0f || move.z != 0.0f) {
+        // normalizza la direzione per il raycast
+        float len = sqrtf(move.x * move.x + move.z * move.z);
+        vec3 dir = { move.x / len, 0.0f, move.z / len };
+
+        vec3 origin = object3d_get_position(center_cube);
+        raycast_3d_result_t hit = collision_3d_raycast(origin, dir, len + 0.5f);
+
+        if (hit.hit && hit.object != center_cube && hit.distance < len + 0.5f) {
+            // fermati appena prima dell'ostacolo
+            float safe = hit.distance - 0.5f;
+            if (safe < 0.0f) safe = 0.0f;
+            move.x = dir.x * safe;
+            move.z = dir.z * safe;
+        }
+
+        object3d_move(center_cube, move);
+    }
+
+    // Collision detection
+    uint32_t iter = 0;
+    object3d_t* hit;
+    while ((hit = collision_3d_test_all(center_cube, &iter))) {
+        collision_3d_resolve_slide(center_cube, hit);
+    }
+
 
 	// Camera controls
 	if (is_key_released(KEY_ESC)) application_quit();

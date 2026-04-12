@@ -42,6 +42,7 @@ material_t* object3d_get_material(object3d_t *obj);
 mat4 object3d_get_transform(object3d_t *obj);
 aabb_t object3d_get_aabb(object3d_t *obj);
 void object3d_set_uv_rect(object3d_t* obj, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+void object3d_move(object3d_t* obj, vec3 delta);
 
 // Input
 int32_t is_key_pressed(InputKeyboardKey key);
@@ -121,5 +122,13 @@ float ambient_factor_get(void);
 void shadow_distance_set(float sd);
 float shadow_distance_get(void);
 void shadow_set_cascade_lambda(float l);
+
+// Collision
+void collision_3d_resolve_slide(object3d_t* a, object3d_t* b);
+void collision_3d_add_collidable(object3d_t* a);
+void collision_3d_remove_collidable(object3d_t* a);
+object3d_t* collision_3d_test_all(object3d_t* a, uint32_t* iter);
+bool collision_3d_test(object3d_t* a, object3d_t* b);
+raycast_3d_result_t collision_3d_raycast(vec3 origin, vec3 direction, float max_distance);
 
 #endif

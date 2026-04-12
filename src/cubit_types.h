@@ -43,6 +43,11 @@ typedef enum {
 } TextureTypes;
 
 typedef enum {
+    OBJECT_2D,
+    OBJECT_3D
+} ObjectType;
+
+typedef enum {
 	UNIFORM_FLOAT,
 	UNIFORM_VEC3,
 	UNIFORM_MAT4,
@@ -93,6 +98,16 @@ typedef struct mesh_t mesh_t;
 typedef struct texture_t texture_t;
 typedef struct shadow_tile_t shadow_tile_t;
 typedef struct shadow_atlas_t shadow_atlas_t;
+
+typedef struct {
+    object3d_t* object;
+    vec3 point;
+    float distance;
+    bool hit;
+} raycast_3d_result_t;
+
+
+
 
 #define COLOR_BLACK   (color_t){0.0f, 0.0f, 0.0f, 1.0f}
 #define COLOR_WHITE   (color_t){1.0f, 1.0f, 1.0f, 1.0f}

@@ -3,7 +3,7 @@
 ## Goal
 Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-poly and voxel-style games.
 
-## Current Architecture (After Stage 19)
+## Current Architecture (After Stage 20)
 
 ### Rendering Pipeline
 - **Three-pass rendering**: shadow pass writes depth from each shadow-casting light's perspective, opaque pass renders solid objects with per-light shadow lookup, transparent pass renders translucent objects back-to-front with alpha blending
@@ -25,6 +25,15 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - Attribute locations: 0=position, 1=normal, 2=UV, 3=tangent, 4=bone_idx(future), 5=bone_wght(future), 6–9=instanced model matrix, 10=instanced uv_rect (vec4)
 - `backend_mesh_new` takes nullable arrays — missing attributes simply skip their buffer
 - `object3d_t`: transform + mesh pointer + material pointer + world AABB (dirty-flagged, recomputed from mesh AABB × model matrix) + `vec4 uv_rect` (default {0,0,1,1} = full texture, for atlas sub-region)
+
+### Collision System
+- **Collision registry**: flat array of `object3d_t*` pointers (max 1000), game opts-in objects via `collision_3d_add_collidable()`. No spatial partitioning — linear scan sufficient for <1000 colliders
+- **AABB test**: `collision_3d_test(a, b)` — six comparisons (separating axis on X/Y/Z), uses `object3d_get_aabb()` to ensure dirty-flagged AABBs are refreshed before testing
+- **Batch query**: `collision_3d_test_all(obj, &iter)` — iterator-based, returns one colliding object per call, skips self, game loops until NULL
+- **Slide resolution**: `collision_resolve_slide(a, b)` — computes penetration on each axis from both directions, picks smallest overlap axis, pushes object out via `object3d_set_position()` to keep position and transform matrix synchronized
+- **Raycast**: `collision_3d_raycast(origin, direction, max_distance)` — slab method (per-axis interval intersection), handles parallel rays and origin-inside-box cases, returns `raycast_result_t` with closest hit object, hit point, distance, and bool. Used both for gameplay (shooting, picking) and preventive collision (cast before move to avoid penetration)
+- **Add/Remove**: `collision_3d_add_collidable()` with duplicate check, `collision_3d_remove_collidable()` with swap-and-pop for O(1) removal
+- **Deferred**: trigger zones (is_trigger flag) and collision callbacks deferred until more gameplay code reveals the right design
 
 ### Shader System
 - `shader_t`: compiled program + `builtin_locations_t` (resolved once at creation) + uniform table (max 16, for custom shaders)
@@ -111,6 +120,7 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 17. **Transparency Support** — `float opacity` on material (default 1.0), dual batch registry (opaque instanced + transparent individual), transparent pass with alpha blending (`SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`), depth read yes/write no, back-to-front sorting by distance² from camera, alpha cutout via `discard` when `tex_color.a * opacity < 0.5`, fragment output alpha = `tex_color.a * opacity`, `bool cast_shadow` on material (default true) allows game dev to disable shadow casting for transparent objects
 18. **Alpha Cutout in Shadow Pass** — shadow shader upgraded from empty depth-only to UV-aware: accepts UV (location 2) + uv_rect (location 10), remaps UVs, samples diffuse texture, discards fragments with `tex_color.a < 0.5`. Shadow pass in backend binds each entry's diffuse texture before draw call (both opaque and transparent loops). Shadows of cutout objects (leaves, fences) now have correct holes instead of solid silhouettes
 19. **Shadow Atlas + CSM** — refactored from separate per-light FBO+texture to single shared depth atlas. `shadow_map_t` eliminated — replaced by `int32_t cascade_tiles[MAX_CASCADES]` + `cascade_count` on `light_t`. Dynamic tile array (`malloc`'d from config). Atlas FBO bound once per shadow pass, `glViewport` per tile. Fragment shader samples single `shadow_atlas` sampler, remaps coordinates via per-light `shadow_rect[MAX_LIGHTS]`. Shader defines (`MAX_LIGHTS`, `MAX_CASCADES`, light type enums) injected from C. Game API simplified: `light_enable_shadow`/`light_disable_shadow` auto-detect light type — spot gets 1 tile, directional gets MAX_CASCADES tiles. Cascaded Shadow Maps: practical split scheme (λ=0.5) divides frustum into slices, each rendered into its own atlas tile. Frontend computes per-cascade frustum corners each frame. Dedicated GLSL path (`calculate_cascade_shadow`) selects cascade by view-space depth via `view_matrix` uniform. Texel snapping on VP translation prevents shadow swimming. `MAX_CASCADES` defined in `cubit_types.h`. CSM transparent to game developer
+20. **AABB Collision System** — `collision.c/h` module. Flat registry of collidable `object3d_t*` pointers (max 1000), game opts-in via `collision_3d_add_collidable()` with duplicate check, `collision_3d_remove_collidable()` with swap-and-pop. `collision_3d_test(a, b)` performs 6-comparison separating axis test using `object3d_get_aabb()` for dirty-safe AABB access. `collision_3d_test_all(obj, &iter)` iterator-based batch query skipping self. `collision_resolve_slide(a, b)` computes per-axis penetration from both directions, pushes object out along smallest overlap axis via `object3d_set_position()` keeping position/transform in sync. `collision_3d_raycast(origin, dir, max_dist)` implements slab method — per-axis interval intersection, handles parallel rays and origin-inside-box, returns `raycast_result_t` (object, point, distance, hit bool) for closest hit. Raycast also used preventively before movement to avoid visible penetration frames. `object3d_move()` added for relative position updates. Trigger zones and collision callbacks deferred pending more gameplay experience
 
 ## Key Files
 - `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent passes), shadow pass (atlas-based, single FBO bind + per-cascade viewport loop), instanced rendering, texture upload/bind, scene+material uniform push (shadow atlas + per-light VP/rect + cascade VP/rect/splits), alpha blending state management
@@ -123,24 +133,17 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - `camera.c` — View/projection matrices, frustum planes, visibility testing, frustum corners
 - `camera.h` — Internal camera header: struct definition, frustum corners, visibility, matrix getters
 - `batch.c/h` — Per-frame batch registry (opaque: instanced entries grouped by mesh+material; transparent: individual entries sorted back-to-front by distance²), arena-backed transforms and uv_rects
-- `object.c/h` — Object transform, mesh/material pointers, AABB computation, uv_rect with pixel-to-UV conversion
+- `object.c/h` — Object transform, mesh/material pointers, AABB computation, uv_rect with pixel-to-UV conversion, `object3d_move()` for relative position updates
+- `collision.c/h` — Collision registry (flat array of collidable object pointers), AABB test, iterator-based batch query, slide resolution, slab-method raycast with `raycast_result_t`, add/remove with duplicate check and swap-and-pop
 - `mesh.c/h` — Mesh creation, local AABB from vertex data
 - `cubit.c` — Main loop, shadow_atlas_init/shutdown calls
 - `cubit_types.h` — Types, forward declarations, enums (including TextureTypes), MAX_CASCADES, app_config_t with shadow atlas config
 - `cubit.h` — Public game API (camera creation/movement/zoom, object submission, materials with opacity, lights with enable/disable shadow, ambient, shadow distance, atlas uv_rect, texture creation with type)
 - `input.c/h` — Frame-based input system
 - `stb_math3d.h` / `stb_memory.h` / `stb_image.h` — Math, arena allocator, image loading
-- `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadows via light_enable_shadow, texture atlas with per-object sub-regions
+- `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadows via light_enable_shadow, texture atlas with per-object sub-regions, collision testing with movable center cube (IJKL), slide resolution and preventive raycast before movement
 
 ## Next Stages — Road to Game-Ready
-
-### Stage 20 — AABB Collision System
-Build a collision detection and response system on top of the existing AABB infrastructure. The mesh already computes a local AABB at creation, and `object3d_t` already maintains a dirty-flagged world AABB — the data is there, it just needs to be queried.
-- **Collision registry**: objects opt-in via `object3d_set_collidable(obj, true)`. Engine maintains a flat list of collidable objects (no spatial partitioning yet — sufficient for <1000 active colliders)
-- **Query API**: `collision_test(object3d_t* a, object3d_t* b)` → bool, `collision_test_all(object3d_t* obj)` → returns list of colliding objects, `raycast(vec3 origin, vec3 direction, float max_distance)` → hit result (object pointer, hit point, distance)
-- **Response helpers**: `collision_resolve_slide(obj, overlap)` pushes object out of penetration along the smallest overlap axis — enough for basic "don't walk through walls" behavior
-- **Trigger zones**: flag on collider (`is_trigger`), triggers report overlap but don't block movement — useful for pickups, damage zones, area transitions
-- **Game callback**: `register_collision_callback(collision_func)` so the game can react to hits without polling
 
 ### Stage 21 — Text Rendering (Bitmap Font)
 Render text on screen using a bitmap font atlas. Reuses the existing texture atlas and instanced rendering systems — each glyph is a textured quad with a uv_rect pointing to its character in the atlas.

@@ -61,6 +61,7 @@ SRCS = src/cubit.c \
 	   src/mesh.c \
 	   src/texture.c \
 	   src/shadow.c \
+	   src/collision.c \
        vendor/glad/src/glad.c \
        app/game.c
 

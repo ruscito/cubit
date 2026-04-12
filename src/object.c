@@ -126,6 +126,14 @@ aabb_t object3d_get_aabb(object3d_t *obj) {
 	return obj->aabb;
 }
 
+void object3d_move(object3d_t* obj, vec3 delta) {
+    vec3 pos = obj->position;
+    pos.x += delta.x;
+    pos.y += delta.y;
+    pos.z += delta.z;
+    object3d_set_position(obj, pos);
+}
+
 /* Normalize and assign the object uv_rect. The function calculate
  * an uv clamping for the shader removing 0.5 (half texel) from the
  * rect passed. This camping help to avoid Atlas Bleeding. The asset
