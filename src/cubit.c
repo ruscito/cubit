@@ -14,6 +14,10 @@ extern void application_config(app_config_t *config);
 extern void input_update(void);
 extern void application_fixed_update(double dt);
 
+double application_fps(void) {
+    return renderer_fps();
+}
+
 void fixed_update(double dt){
     application_fixed_update(dt);
 }

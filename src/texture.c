@@ -11,7 +11,10 @@ texture_t* default_texture;
 texture_t* default_normal_texture;
 
 
-texture_t* texture_create(const char* filename, TextureTypes typ) {
+
+
+texture_t* texture_create_from_memory(unsigned char* pixels, uint32_t w,
+                                      uint32_t h, uint32_t c, TextureTypes typ) {
 	texture_t *t = malloc(sizeof(*t));
 	if (!t) {
 		fprintf(stderr, "Failed to allocate memory for texture object\n");
@@ -23,19 +26,26 @@ texture_t* texture_create(const char* filename, TextureTypes typ) {
 	t->s_wrap = REPEAT;
 	t->t_wrap = REPEAT;
 
-	int width, height;
-	unsigned char *raw_pixel = stbi_load(filename, &width, &height, &t->channels, 0);
+    t->channels = c;
+	t->height = h;
+	t->width = w;
+    t->type = typ;
+
+	backend_texture_new(t, pixels);
+
+    return t;
+}
+
+texture_t* texture_create(const char* filename, TextureTypes typ) {
+	int width, height, channels;
+
+    unsigned char *raw_pixel = stbi_load(filename, &width, &height, &channels, 0);
 	if (!raw_pixel) {
 		fprintf(stderr, "Failed to load file: %s\n", filename);
-		free(t);
 		return NULL;
 	}
 
-	t->height = (uint32_t)height;
-	t->width = (uint32_t)width;
-    t->type = typ;
-
-	backend_texture_new(t, raw_pixel);
+	texture_t *t = texture_create_from_memory(raw_pixel, width, height, channels, typ);
 	stbi_image_free(raw_pixel);
 
 	return t;

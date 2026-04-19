@@ -143,7 +143,7 @@ void camera_set_active(camera_t* c) {
         backend_set_cascade_corners(i, corners);
     }
 
-    // Full frustum corners (used by spot lights — they ignore them
+    // Full fru 2stum corners (used by spot lights — they ignore them
     // but shadow_map_update still receives a pointer)
     vec3 corners[8];
     camera_get_frustum_corners(c, corners, c->near, shadow_distance);
@@ -155,5 +155,4 @@ void camera_set_active(camera_t* c) {
 camera_t* camera_get_active(void) {
     return active_camera;
 }
-
 

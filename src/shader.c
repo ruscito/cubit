@@ -246,11 +246,42 @@ static const char* shadow_fs_src = "#version 330\n"
 	"}\0";
 
 
+static const char* text_vs_src = "#version 330 core\n"
+    "layout (location = 0) in vec3 aPos;\n"
+    "layout (location = 2) in vec2 aUV;\n"
+    "layout (location = 6) in mat4 aModel;\n"
+    "layout (location = 10) in vec4 aUV_rect;\n"
+    "layout (location = 11) in vec4 aColor;\n"
+    "\n"
+    "uniform mat4 projection;\n"
+    "\n"
+    "out vec2 frag_uv;\n"
+    "out vec4 frag_color;\n"
+    "\n"
+    "void main() {\n"
+    "    gl_Position = projection * aModel * vec4(aPos, 1.0);\n"
+    "    frag_uv = aUV * (aUV_rect.zw - aUV_rect.xy) + aUV_rect.xy;\n"
+    "    frag_color = aColor;\n"
+    "}\0";
 
+static const char* text_fs_src = "#version 330 core\n"
+    "in vec2 frag_uv;\n"
+    "in vec4 frag_color;\n"
+    "\n"
+    "uniform sampler2D diffuse_texture;\n"
+    "\n"
+    "out vec4 fragColor;\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 tex = texture(diffuse_texture, frag_uv);\n"
+    "    if (tex.a < 0.1) discard;\n"
+    "    fragColor = vec4(frag_color.rgb * tex.rgb, tex.a * frag_color.a);\n"
+    "}\0";
 
 static shader_t* default_shader;
 static shader_t* unlit_shader;
 static shader_t* shadow_shader;
+static shader_t* text_shader;
 
 
 static int32_t get_uniform_location(shader_t* s, const char* uniform, uint32_t pos) {
@@ -473,12 +504,18 @@ void shader_init(void) {
 		exit(-1);
 	}
 
+    text_shader = shader_create(text_vs_src, text_fs_src);
+    if (text_shader == NULL) {
+        fprintf(stderr, "Failed to create text shader\n");
+        exit(-1);
+    }
 }
 
 void shader_shutdown(void) {
 	shader_destroy(default_shader);
 	shader_destroy(unlit_shader);
 	shader_destroy(shadow_shader);
+    shader_destroy(text_shader);
 }
 
 shader_t* shader_get_default(void) {
@@ -494,3 +531,6 @@ shader_t* shader_get_shadow(void) {
 	return shadow_shader;
 }
 
+shader_t* shader_get_text(void) {
+    return text_shader;
+}

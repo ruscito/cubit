@@ -8,6 +8,7 @@
 #include "mesh.h"
 #include "texture.h"
 #include "shadow.h"
+#include "text.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -42,6 +43,7 @@ static double accumulator;
 static shadow_atlas_t* shadow_atlas;
 static vec3 cascade_corners[MAX_CASCADES][8];
 static mat4 view_matrix;
+static double fps = 60.0;
 
 extern void input_process_keyboard(int32_t key, int32_t scancode, int32_t action, int32_t mods);
 extern void input_process_mouse_position(double x_pos, double y_pos);
@@ -59,6 +61,23 @@ static struct {
 	render_command_t command_queue[MAX_QUEUE];
 } state;
 
+
+static void backend_text_init(void) {
+    mesh_t* quad = text_get_quad();
+
+    // Per-instance color VBO (location 11)
+    glBindVertexArray(quad->vao);
+    glGenBuffers(1, &quad->instance_vbo_color);
+    glBindBuffer(GL_ARRAY_BUFFER, quad->instance_vbo_color);
+    glVertexAttribPointer(11, 4, GL_FLOAT, GL_FALSE, sizeof(vec4), (void*)0);
+    glEnableVertexAttribArray(11);
+    glVertexAttribDivisor(11, 1);
+    glBindVertexArray(0);
+}
+
+static void backend_text_shutdown(void) {
+    // mesh_destroy del quad già pulisce i VBO
+}
 
 static void error_callback(int error, const char* description) {
     fprintf(stderr, "Error #%d :%s\n", error, description);
@@ -187,9 +206,12 @@ void renderer_loop_setup(void) {
 }
 
 static void dt_update(void) {
-	double current_frame_time = glfwGetTime();
-	dt = (double) fmin(current_frame_time - last_frame_time, MAX_DT);
-	last_frame_time = current_frame_time;
+    double current_frame_time = glfwGetTime();
+    dt = (double) fmin(current_frame_time - last_frame_time, MAX_DT);
+    last_frame_time = current_frame_time;
+    // Smoothed FPS (exponential moving average)
+     if (dt > 0.001)
+        fps = fps * 0.95 + (1.0 / dt) * 0.05;
 }
 
 double renderer_dt(void) {
@@ -620,6 +642,69 @@ static void shadow_pass(void) {
     glViewport(0, 0, state.gfx->width, state.gfx->height);
 }
 
+/* TEXT PASS — renders 2D text as an overlay on top of the 3D scene.
+ * Uses an orthographic projection matching the window size in pixels,
+ * with origin at top-left and Y pointing down. Depth test is off so
+ * text is always visible, blending is on for the font atlas alpha.
+ * All glyphs queued during the frame via text_draw() are rendered in
+ * a single instanced draw call sharing the same quad mesh and font
+ * texture. The glyph buffer is reset at the end for the next frame. */
+static void text_pass(void) {
+    uint32_t count = text_get_count();
+    if (count == 0) return;
+
+    mesh_t*    quad       = text_get_quad();
+    texture_t* tex        = text_get_texture();
+    mat4*      transforms = text_get_transforms();
+    vec4*      uv_rects   = text_get_uv_rects();
+    color_t*   colors     = text_get_colors();
+
+    float w = (float)state.gfx->width;
+    float h = (float)state.gfx->height;
+    mat4 ortho = {
+        .m = {
+            2.0f/w,  0.0f,    0.0f, 0.0f,
+            0.0f,   -2.0f/h,  0.0f, 0.0f,
+            0.0f,    0.0f,   -1.0f, 0.0f,
+           -1.0f,    1.0f,    0.0f, 1.0f
+        }
+    };
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    shader_t* shader = shader_get_text();
+    glUseProgram(shader->program_id);
+    glUniformMatrix4fv(glGetUniformLocation(shader->program_id, "projection"),
+                       1, GL_FALSE, ortho.m);
+    glUniform1i(glGetUniformLocation(shader->program_id, "diffuse_texture"), 0);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex->id);
+
+    glBindBuffer(GL_ARRAY_BUFFER, quad->instance_vbo_transform);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(mat4) * count, transforms, GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, quad->instance_vbo_uv_rect);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vec4) * count, uv_rects, GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, quad->instance_vbo_color);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(color_t) * count, colors, GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glBindVertexArray(quad->vao);
+    glDrawElementsInstanced(GL_TRIANGLES, quad->index_count, GL_UNSIGNED_INT, 0, count);
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    text_reset();
+}
+
 void renderer_draw(void) {
 	glClearColor(0.4, 0.45, 0.5, 1.0); // Default background
 	glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
@@ -683,6 +768,13 @@ void renderer_draw(void) {
 
     // Transparent Pass
     transparent_pass();
+
+    // Draw orthographic pass
+    text_pass();
+}
+
+double renderer_fps(void) {
+    return fps;
 }
 
 void renderer_init(gfx_context* ctx) {
@@ -709,10 +801,14 @@ void renderer_init(gfx_context* ctx) {
 	texture_init();
 	light_init();
 	material_init();
+    text_init();
+    backend_text_init();
 }
 
 
 void renderer_shutdown(void) {
+    backend_text_shutdown();
+    text_shutdown();
 	material_shutdown();
 	light_shutdown();
 	texture_shutdown();
@@ -795,6 +891,13 @@ void backend_mesh_new(mesh_t* m, void *pos, void* nor, void *uv, void *tg, uint3
 	glEnableVertexAttribArray(LOC_UV_RECT);
 	glVertexAttribDivisor(LOC_UV_RECT, 1);
 
+    // Instance color (location 11)
+    glGenBuffers(1, &m->instance_vbo_color);
+    glBindBuffer(GL_ARRAY_BUFFER, m->instance_vbo_color);
+    glVertexAttribPointer(11, 4, GL_FLOAT, GL_FALSE, sizeof(vec4), (void*)0);
+    glEnableVertexAttribArray(11);
+    glVertexAttribDivisor(11, 1);
+
     glBindVertexArray(0);
 }
 
@@ -808,6 +911,7 @@ void backend_mesh_destroy(mesh_t* m) {
 	glDeleteBuffers(1, &m->vbo_uv);
 	glDeleteBuffers(1, &m->vbo_tangent);
 	glDeleteBuffers(1, &m->ebo);
+    glDeleteBuffers(1, &m->instance_vbo_color);
 }
 
 

@@ -10,6 +10,7 @@
 
 // Application
 void application_quit(void);
+double application_fps(void);
 void fill_screen(color_t color);
 void set_camera(vec3 pos, vec3 targt, vec3 up, float fov, uint32_t mode, float near, float far, float aspect);
 void register_viewport_resized_callback(viewport_resized_func callback);
@@ -112,6 +113,7 @@ void light_disable_shadow(int32_t index);
 
 // Texture
 texture_t* texture_create(const char* filename, TextureTypes typ);
+texture_t* texture_create_from_memory(unsigned char* pixels, uint32_t w, uint32_t h, uint32_t c, TextureTypes typ);
 void texture_destroy(texture_t* t);
 
 // Scene related
@@ -130,5 +132,8 @@ void collision_3d_remove_collidable(object3d_t* a);
 object3d_t* collision_3d_test_all(object3d_t* a, uint32_t* iter);
 bool collision_3d_test(object3d_t* a, object3d_t* b);
 raycast_3d_result_t collision_3d_raycast(vec3 origin, vec3 direction, float max_distance);
+
+// Text
+void text_draw(const char* text, uint32_t length, float  size, uint32_t x, uint32_t y, color_t color);
 
 #endif

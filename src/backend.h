@@ -58,6 +58,7 @@ void renderer_draw(void);
 void renderer_submit(render_command_t *cmd);
 void renderer_process_input(void);
 void renderer_fixed_update(void);
+double renderer_fps(void);
 
 
 // Backend general function for the frontend

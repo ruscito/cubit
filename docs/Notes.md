@@ -3,10 +3,10 @@
 ## Goal
 Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-poly and voxel-style games.
 
-## Current Architecture (After Stage 20)
+## Current Architecture (After Stage 21)
 
 ### Rendering Pipeline
-- **Three-pass rendering**: shadow pass writes depth from each shadow-casting light's perspective, opaque pass renders solid objects with per-light shadow lookup, transparent pass renders translucent objects back-to-front with alpha blending
+- **Four-pass rendering**: shadow pass writes depth from each shadow-casting light's perspective, opaque pass renders solid objects with per-light shadow lookup, transparent pass renders translucent objects back-to-front with alpha blending, text pass renders 2D overlay glyphs with orthographic projection
 - Instanced rendering via `glDrawElementsInstanced` — one draw call per unique mesh+material combination
 - Automatic batching: `submit_object3d()` pushes to batch registry, engine groups by mesh+material, uploads transforms and uv_rects per batch
 - Frustum culling via AABB: mesh computes local AABB from vertex data at creation, object transforms it to world space, camera tests against 6 frustum planes (Griggs-Hartmann extraction) with configurable margin (`CULLING_BORDER`) to prevent popping at screen edges
@@ -21,8 +21,8 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - `camera_get_frustum_corners(camera_t*, vec3*, near_dist, far_dist)` accepts explicit near/far distances — used both for full frustum (spot lights) and per-cascade slices (directional CSM)
 
 ### Mesh System
-- `mesh_t`: VAO, separate VBOs per attribute (position/normal/UV/tangent), two instance VBOs (transform + uv_rect), EBO, vertex count, index count, local AABB
-- Attribute locations: 0=position, 1=normal, 2=UV, 3=tangent, 4=bone_idx(future), 5=bone_wght(future), 6–9=instanced model matrix, 10=instanced uv_rect (vec4)
+- `mesh_t`: VAO, separate VBOs per attribute (position/normal/UV/tangent), three instance VBOs (transform + uv_rect + color), EBO, vertex count, index count, local AABB
+- Attribute locations: 0=position, 1=normal, 2=UV, 3=tangent, 4=bone_idx(future), 5=bone_wght(future), 6–9=instanced model matrix, 10=instanced uv_rect (vec4), 11=instanced color (vec4)
 - `backend_mesh_new` takes nullable arrays — missing attributes simply skip their buffer
 - `object3d_t`: transform + mesh pointer + material pointer + world AABB (dirty-flagged, recomputed from mesh AABB × model matrix) + `vec4 uv_rect` (default {0,0,1,1} = full texture, for atlas sub-region)
 
@@ -38,7 +38,7 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 ### Shader System
 - `shader_t`: compiled program + `builtin_locations_t` (resolved once at creation) + uniform table (max 16, for custom shaders)
 - `builtin_locations_t` caches locations for: vp, surface_color, specular_color, shininess, emissive_color, opacity, diffuse_texture sampler, normal_texture sampler, shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS], cascade_vp[MAX_CASCADES], cascade_rect[MAX_CASCADES], cascade_splits[MAX_CASCADES], cascade_count, view_matrix, light array (16 slots × 10 fields each), light_count, camera_position, ambient_factor
-- Three built-in shaders: **lit** (default, Blinn-Phong + multi-shadow), **unlit** (flat surface_color), **shadow** (depth-only with alpha cutout — samples diffuse texture via UV + uv_rect remapping, discards fragments with `tex_color.a < 0.5`)
+- Three built-in shaders: **lit** (default, Blinn-Phong + multi-shadow), **unlit** (flat surface_color), **shadow** (depth-only with alpha cutout — samples diffuse texture via UV + uv_rect remapping, discards fragments with `tex_color.a < 0.5`). Plus **text** shader (orthographic, samples font atlas with per-glyph color tint via instanced color attribute at location 11)
 - Draw loop reads shader through material chain: `batch_entry → material → shader → locations`
 
 ### Material System
@@ -51,6 +51,7 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 ### Texture System
 - `texture_t`: GPU handle (id), width, height, channels, filtering mode, wrapping mode, `TextureTypes type` (COLOR_TEXTURE or DATA_TEXTURE)
 - `texture_create(filename, type)` — game specifies whether texture is color (diffuse, emissive) or data (normal map)
+- `texture_create_from_memory(pixels, w, h, channels, type)` — creates texture from raw pixel data without loading from disk, used by the text system for the embedded font atlas
 - **sRGB pipeline**: color textures uploaded as `GL_SRGB8`/`GL_SRGB8_ALPHA8` (GPU auto-converts to linear on sample), data textures as `GL_RGB8`/`GL_RGBA8` (no conversion). `GL_FRAMEBUFFER_SRGB` enabled at init for automatic linear→sRGB on output. Lighting computed in linear space
 - `stb_image.h` loads files → `backend_texture_new` uploads to GPU → CPU pixels freed immediately
 - 1×1 white fallback texture: always bound when no texture assigned. Shader always samples and multiplies — `surface_color × white = surface_color`, no branches needed
@@ -97,7 +98,7 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - Game API: `light_enable_shadow(index)`, `light_disable_shadow(index)`, `shadow_distance_set()`/`shadow_distance_get()` — CSM is automatic for directional lights, transparent to game developer
 
 ### Init Order
-`shader_init()` → `texture_init()` → `light_init()` → `material_init()`. Then `shadow_atlas_init()` (called from `cubit.c` after `renderer_init`). Shutdown reverses.
+`shader_init()` → `texture_init()` → `light_init()` → `material_init()` → `text_init()` → `backend_text_init()`. Then `shadow_atlas_init()` (called from `cubit.c` after `renderer_init`). Shutdown reverses.
 
 ## Completed Stages
 
@@ -121,13 +122,14 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 18. **Alpha Cutout in Shadow Pass** — shadow shader upgraded from empty depth-only to UV-aware: accepts UV (location 2) + uv_rect (location 10), remaps UVs, samples diffuse texture, discards fragments with `tex_color.a < 0.5`. Shadow pass in backend binds each entry's diffuse texture before draw call (both opaque and transparent loops). Shadows of cutout objects (leaves, fences) now have correct holes instead of solid silhouettes
 19. **Shadow Atlas + CSM** — refactored from separate per-light FBO+texture to single shared depth atlas. `shadow_map_t` eliminated — replaced by `int32_t cascade_tiles[MAX_CASCADES]` + `cascade_count` on `light_t`. Dynamic tile array (`malloc`'d from config). Atlas FBO bound once per shadow pass, `glViewport` per tile. Fragment shader samples single `shadow_atlas` sampler, remaps coordinates via per-light `shadow_rect[MAX_LIGHTS]`. Shader defines (`MAX_LIGHTS`, `MAX_CASCADES`, light type enums) injected from C. Game API simplified: `light_enable_shadow`/`light_disable_shadow` auto-detect light type — spot gets 1 tile, directional gets MAX_CASCADES tiles. Cascaded Shadow Maps: practical split scheme (λ=0.5) divides frustum into slices, each rendered into its own atlas tile. Frontend computes per-cascade frustum corners each frame. Dedicated GLSL path (`calculate_cascade_shadow`) selects cascade by view-space depth via `view_matrix` uniform. Texel snapping on VP translation prevents shadow swimming. `MAX_CASCADES` defined in `cubit_types.h`. CSM transparent to game developer
 20. **AABB Collision System** — `collision.c/h` module. Flat registry of collidable `object3d_t*` pointers (max 1000), game opts-in via `collision_3d_add_collidable()` with duplicate check, `collision_3d_remove_collidable()` with swap-and-pop. `collision_3d_test(a, b)` performs 6-comparison separating axis test using `object3d_get_aabb()` for dirty-safe AABB access. `collision_3d_test_all(obj, &iter)` iterator-based batch query skipping self. `collision_resolve_slide(a, b)` computes per-axis penetration from both directions, pushes object out along smallest overlap axis via `object3d_set_position()` keeping position/transform in sync. `collision_3d_raycast(origin, dir, max_dist)` implements slab method — per-axis interval intersection, handles parallel rays and origin-inside-box, returns `raycast_result_t` (object, point, distance, hit bool) for closest hit. Raycast also used preventively before movement to avoid visible penetration frames. `object3d_move()` added for relative position updates. Trigger zones and collision callbacks deferred pending more gameplay experience
+21. **Text Rendering (Bitmap Font)** — `text.c/h` module + `font_atlas.h` embedded PNG. DejaVu Sans Mono 24px rasterized into 512×192 atlas (16×6 grid, 32×32 cells, baseline-aligned). Atlas PNG embedded as `static const uint8_t[]` in header, decoded at init via `stbi_load_from_memory()`, uploaded as `DATA_TEXTURE` (no sRGB conversion). `text_draw(str, length, size, x, y, color)` queues glyphs into static arrays (transforms + uv_rects + colors, max 1024 per frame). Per-glyph `get_uv_rect()` computes normalized UV coordinates with half-texel inset. Dedicated text shader: vertex takes position (loc 0), UV (loc 2), instanced model matrix (loc 6–9), instanced uv_rect (loc 10), instanced color (loc 11); fragment samples atlas, multiplies by per-glyph color, discards low-alpha. `text_pass()` in backend: orthographic projection (origin top-left, Y down), depth test off, cull face off, alpha blending on, single instanced draw call for all queued glyphs, resets glyph count at end of frame. `backend_text_init()` sets up per-instance color VBO (location 11, divisor 1) on the text quad mesh. `texture_create_from_memory()` added to create textures from raw pixel data without file I/O
 
 ## Key Files
-- `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent passes), shadow pass (atlas-based, single FBO bind + per-cascade viewport loop), instanced rendering, texture upload/bind, scene+material uniform push (shadow atlas + per-light VP/rect + cascade VP/rect/splits), alpha blending state management
+- `backend.c/h` — OpenGL renderer, draw loop (opaque + transparent + text passes), shadow pass (atlas-based, single FBO bind + per-cascade viewport loop), instanced rendering, texture upload/bind, scene+material uniform push (shadow atlas + per-light VP/rect + cascade VP/rect/splits), alpha blending state management, `backend_text_init`/`backend_text_shutdown` for text color VBO setup
 - `frontend.c` — Engine API (submit_object3d, camera_set_active with cascade corner computation, fill_screen, shadow_distance), stb_image/math/memory implementations, active camera and VPM caching
-- `shader.c/h` — Shader compilation, builtin location resolution (shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS], cascade_vp/rect/splits[MAX_CASCADES], cascade_count, view_matrix), lit+unlit+shadow shader sources, dynamic define injection for lit shader
+- `shader.c/h` — Shader compilation, builtin location resolution (shadow_atlas sampler, light_vp[MAX_LIGHTS], shadow_rect[MAX_LIGHTS], cascade_vp/rect/splits[MAX_CASCADES], cascade_count, view_matrix), lit+unlit+shadow+text shader sources, dynamic define injection for lit shader
 - `material.c/h` — Material creation with auto shader+texture, property setters
-- `texture.c/h` — Texture loading with type (color/data), default fallbacks, GPU upload via backend, sRGB format selection
+- `texture.c/h` — Texture loading with type (color/data), `texture_create_from_memory` for embedded data, default fallbacks, GPU upload via backend, sRGB format selection
 - `light.c/h` — Light table, game-facing light API, `light_enable_shadow`/`light_disable_shadow` (auto-detect type, allocate 1 or MAX_CASCADES tiles), `cascade_tiles[MAX_CASCADES]` + `cascade_count` per light
 - `shadow.c/h` — Shadow atlas init/shutdown (struct + tiles + GPU resources via backend), tile management (find free, set occupied), shadow_map_update (VP calculation on tile, texel snapping), shadow_compute_split_distances (practical split scheme), shadow_atlas_get
 - `camera.c` — View/projection matrices, frustum planes, visibility testing, frustum corners
@@ -136,22 +138,16 @@ Custom 3D engine in C with OpenGL. Efficient rendering of 100k+ objects for low-
 - `object.c/h` — Object transform, mesh/material pointers, AABB computation, uv_rect with pixel-to-UV conversion, `object3d_move()` for relative position updates
 - `collision.c/h` — Collision registry (flat array of collidable object pointers), AABB test, iterator-based batch query, slide resolution, slab-method raycast with `raycast_result_t`, add/remove with duplicate check and swap-and-pop
 - `mesh.c/h` — Mesh creation, local AABB from vertex data
+- `text.c/h` — Text rendering module: embedded font atlas decode, glyph batching (transforms + uv_rects + colors), `text_draw()` API, getters for backend consumption, per-frame reset
+- `font_atlas.h` — Embedded DejaVu Sans Mono font atlas as `static const uint8_t[]` PNG data (512×192, 32×32 cells, baseline-aligned, 95 ASCII glyphs)
 - `cubit.c` — Main loop, shadow_atlas_init/shutdown calls
 - `cubit_types.h` — Types, forward declarations, enums (including TextureTypes), MAX_CASCADES, app_config_t with shadow atlas config
-- `cubit.h` — Public game API (camera creation/movement/zoom, object submission, materials with opacity, lights with enable/disable shadow, ambient, shadow distance, atlas uv_rect, texture creation with type)
+- `cubit.h` — Public game API (camera creation/movement/zoom, object submission, materials with opacity, lights with enable/disable shadow, ambient, shadow distance, atlas uv_rect, texture creation with type, text_draw)
 - `input.c/h` — Frame-based input system
 - `stb_math3d.h` / `stb_memory.h` / `stb_image.h` — Math, arena allocator, image loading
-- `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadows via light_enable_shadow, texture atlas with per-object sub-regions, collision testing with movable center cube (IJKL), slide resolution and preventive raycast before movement
+- `game.c` — Test scene: 5 cubes + floor, 3 light types, textured and untextured materials, cobblestone normal map, directional + spot shadows via light_enable_shadow, texture atlas with per-object sub-regions, collision testing with movable center cube (IJKL), slide resolution and preventive raycast, text rendering test
 
 ## Next Stages — Road to Game-Ready
-
-### Stage 21 — Text Rendering (Bitmap Font)
-Render text on screen using a bitmap font atlas. Reuses the existing texture atlas and instanced rendering systems — each glyph is a textured quad with a uv_rect pointing to its character in the atlas.
-- **Font atlas**: single PNG with fixed-size character grid (ASCII 32–126), loaded via existing `texture_create()`. Engine ships a default font atlas; game can provide custom ones
-- **Text API**: `text_draw(const char* str, float x, float y, float size, color_t color)` — screen-space coordinates (pixels from top-left). `text_draw_world(str, vec3 pos, ...)` for in-world floating text (billboarded toward camera)
-- **Orthographic overlay pass**: new fourth pass after transparent pass, renders all 2D elements (text, UI) with a simple orthographic projection matching window dimensions. Depth test off, blending on
-- **Batching**: all glyphs sharing the same font atlas batch into one draw call via the existing instanced pipeline — a 100-character string is one draw call, not 100
-- **Alignment**: left/center/right horizontal alignment, computed from string width (glyph count × glyph advance)
 
 ### Stage 22 — 2D Sprite & UI Layer
 Extend the orthographic overlay from Stage 21 into a general-purpose 2D system for HUD elements, menus, and sprite-based gameplay.

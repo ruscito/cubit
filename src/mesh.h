@@ -14,6 +14,7 @@ struct mesh_t {
 	uint32_t vbo_tangent;
 	uint32_t instance_vbo_transform;
 	uint32_t instance_vbo_uv_rect;
+    uint32_t instance_vbo_color;
 	uint32_t ebo;
 	uint32_t vertex_count;
 	uint32_t index_count;

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 
 #define CAMERA_SPEED 3.0f
 #define ROTATION_SPEED 1.0f
@@ -555,6 +556,11 @@ void application_update(double dt) {
 	if (is_key_pressed(KEY_4)) zoom = 4.0f;
 
 	camera_smooth_zoom(camera, zoom, 5.0f, dt);
+
+    char fps_text[32];
+    sprintf(fps_text, "FPS: %.0f", application_fps());
+    text_draw(fps_text, strlen(fps_text), 0.5f, 10, 10, CUBIT_GREEN);
+    // text_draw("Una provola!", 12, .5f, 10, 10, CUBIT_RED);
 
 	// Submit everything
     camera_set_active(camera);
