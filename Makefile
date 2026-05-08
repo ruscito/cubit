@@ -52,10 +52,14 @@ SRCS = src/cubit.c \
        src/backend.c \
        src/frontend.c \
        src/object.c \
+       src/object2d.c \
 	   src/camera.c\
+	   src/camera2d.c \
        src/input.c \
        src/batch.c \
+       src/batch2d.c \
        src/material.c \
+       src/material2d.c \
 	   src/shader.c \
 	   src/light.c \
 	   src/mesh.c \

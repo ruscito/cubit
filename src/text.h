@@ -5,18 +5,15 @@
 
 #include "cubit_types.h"
 
-// Internal API for the backend
-void        text_init(void);
-void        text_shutdown(void);
-mat4*       text_get_transforms(void);
-vec4*       text_get_uv_rects(void);
-uint32_t    text_get_count(void);
-mesh_t*     text_get_quad(void);
-color_t*    text_get_colors(void);
-texture_t*  text_get_texture(void);
-void        text_reset(void);
+
+// Engine-internal lifecycle (called by renderer_init/shutdown).
+void text_init(void);
+void text_shutdown(void);
+
+// Public-ish: expose the font texture for game code that wants to use the
+// default font on its own materials. Stable contract; left here even though
+// stage 22 step 9 made the rest of the old text-pass API obsolete.
+texture_t* text_get_default_font_texture(void);
 
 
 #endif // TEXT_H_
-
-

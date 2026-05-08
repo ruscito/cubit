@@ -20,12 +20,21 @@
  */
 
 // Data type definition
+typedef struct { float x, y; } vec2;
 typedef struct { float x, y, z; } vec3;
 typedef struct { float x, y, z, w; } vec4;
 typedef struct { float m[16]; } mat4;
 
 
 // Declaration
+vec2 vec2_add(vec2 a, vec2 b);
+vec2 vec2_sub(vec2 a, vec2 b);
+vec2 vec2_scale(vec2 a, float s);
+float vec2_dot(vec2 a, vec2 b);
+vec2 vec2_multiply(vec2 a, vec2 b);
+float vec2_length(vec2 a);
+vec2 vec2_normalize(vec2 a);
+
 vec3 vec3_add(vec3 a, vec3 b);
 vec3 vec3_sub(vec3 a, vec3 b);
 vec3 vec3_scale(vec3 a, float s);
@@ -56,6 +65,38 @@ mat4 mat4_look_at(vec3 e, vec3 c, vec3 u);
 
 
 #ifdef STB_MATH3D_IMPLEMENTATION
+
+/************************** vec2  ***************************/
+vec2 vec2_add(vec2 a, vec2 b) {
+	return (vec2){ a.x + b.x, a.y + b.y };
+}
+
+vec2 vec2_sub(vec2 a, vec2 b) {
+	return (vec2){ a.x - b.x, a.y - b.y };
+}
+
+vec2 vec2_scale(vec2 a, float s) {
+	return (vec2){ a.x * s, a.y * s };
+}
+
+float vec2_dot(vec2 a, vec2 b) {
+	return a.x * b.x + a.y * b.y;
+}
+
+vec2 vec2_multiply(vec2 a, vec2 b) {
+	return (vec2){ a.x * b.x, a.y * b.y };
+}
+
+float vec2_length(vec2 a) {
+	return sqrtf(a.x * a.x + a.y * a.y);
+}
+
+vec2 vec2_normalize(vec2 a) {
+	// vector magnitude
+	float m = vec2_length(a);
+	if (m == 0) return (vec2){ 0.0f, 0.0f };
+	return (vec2){ a.x / m, a.y / m };
+}
 
 /************************** vec3  ***************************/
 vec3 vec3_add(vec3 a, vec3 b) {

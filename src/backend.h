@@ -68,6 +68,8 @@ void backend_texture_new(texture_t*  t, unsigned char* raw_pixel);
 void backend_texture_destroy(texture_t* t);
 void backend_shutdown(void);
 void backend_set_mouse_mode(int32_t mode);
+void backend_get_window_size(int32_t* w, int32_t* h);
+void backend_get_framebuffer_size(int32_t* w, int32_t* h);
 void backend_ambient_factor_set(float f);
 float backend_ambient_factor_get(void);
 void backend_shadow_atlas_new(shadow_atlas_t* sa);

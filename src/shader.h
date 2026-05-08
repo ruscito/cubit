@@ -78,6 +78,6 @@ void shader_shutdown(void);
 shader_t* shader_get_default(void);
 shader_t* shader_get_unlit(void);
 shader_t* shader_get_shadow(void);
-shader_t* shader_get_text(void);
+shader_t* shader_get_sprite(void);
 
 #endif

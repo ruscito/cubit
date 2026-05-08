@@ -73,6 +73,12 @@ typedef enum {
 } LightTypes;
 
 typedef enum {
+    BLEND_NORMAL,       // SRC_ALPHA, ONE_MINUS_SRC_ALPHA — standard alpha blending
+    BLEND_ADDITIVE,     // SRC_ALPHA, ONE — glow, fire, energy effects
+    BLEND_MULTIPLY,     // DST_COLOR, ZERO — shadows, darkening masks
+} blend_mode_t;
+
+typedef enum {
 	NEAREST,
 	LINEAR,
 } FilteringMode;
@@ -88,8 +94,11 @@ typedef struct { float x, y, w, h; } viewport_t;
 typedef struct { uint32_t x, y, w, h; } rect_t;
 
 typedef struct camera_t camera_t;
+typedef struct camera2d_t camera2d_t;
 typedef struct object3d_t object3d_t;
+typedef struct object2d_t object2d_t;
 typedef struct material_t material_t;
+typedef struct material2d_t material2d_t;
 typedef struct uniform_table_entry_t uniform_table_entry_t;
 typedef struct builtin_locations_t builtin_locations_t;
 typedef struct shader_t shader_t;
@@ -105,6 +114,47 @@ typedef struct {
     float distance;
     bool hit;
 } raycast_3d_result_t;
+
+
+/*
+ * Configuration struct for sprite_submit() — the immediate-mode 2D draw API.
+ *
+ * An immediate sprite lives for exactly one frame. It is fed directly into
+ * the 2D batch without going through the object2d pool, so there is no
+ * lifetime to manage: just fill in the struct and submit.
+ *
+ * Designated-initializer friendly. Typical usage:
+ *
+ *     sprite_submit(&(sprite_submit_t){
+ *         .camera    = camera2d_get_ui(),
+ *         .material  = material2d_get_default(),
+ *         .transform = mat4_translate(x, y, 0.0f),
+ *         .uv_rect   = (vec4){0, 0, 1, 1},
+ *         .color     = COLOR_WHITE,
+ *         .layer     = 5,
+ *     });
+ *
+ * Conventions:
+ * - camera and material are required (no NULL fallback). The game must pick
+ *   one explicitly — typically camera2d_get_ui() and material2d_get_default()
+ *   for HUD-style submissions.
+ * - transform is a full mat4 so the caller has total control over scale,
+ *   rotation, position, and shear without the API having to grow knobs for
+ *   each special case (text glyphs use width/height in the matrix, particles
+ *   may want non-uniform scale, etc.).
+ * - uv_rect is in normalized atlas coordinates (xy = top-left, zw = bottom-right).
+ *   Use {0,0,1,1} for "use the whole texture".
+ * - color is the per-instance tint; final pixel = texture * color * material.color
+ *   (the material multiplication is baked CPU-side at submit time).
+ */
+typedef struct {
+    camera2d_t*   camera;
+    material2d_t* material;
+    mat4          transform;
+    vec4          uv_rect;
+    color_t       color;
+    int32_t       layer;
+} sprite_submit_t;
 
 
 
@@ -137,6 +187,7 @@ typedef struct {
 	int fps;
     uint32_t shadow_atlas_size;
     uint32_t shadow_tile_size;
+    vec2 ui_virtual_resolution;
 } app_config_t;
 
 /*
