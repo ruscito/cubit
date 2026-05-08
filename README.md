@@ -12,6 +12,10 @@ For detailed architecture/design decisions and development notes, see [Notes.md]
 ## Quick Start
 For a quick start see [game.c](app/game.c).
 
+<p align="center">
+  <img src="docs/Screenshot.png" alt="game.c demo" width="50%"/>
+</p>
+
 ## Building
 
 ```bash
@@ -29,6 +33,3 @@ MIT License - See LICENSE file for details
 
 ---
 
-<p align="center">
-  Made with ❤️ for game developers
-</p>
