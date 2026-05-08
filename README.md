@@ -13,7 +13,7 @@ For detailed architecture/design decisions and development notes, see [Notes.md]
 For a quick start see [game.c](app/game.c).
 
 <p align="center">
-  <img src="docs/Screenshot.png" alt="game.c demo" width="50%"/>
+  <img src="docs/Screenshot.png" alt="game.c demo" width="100%"/>
 </p>
 
 ## Building
